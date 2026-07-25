@@ -27,12 +27,12 @@ jobs:
       ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           clean: true
 
       - name: Use Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           cache: npm
           node-version: 22.13.1
@@ -106,7 +106,7 @@ jobs:
 
       - name: Preserve release artifacts
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           compression-level: 0
           name: wmux-ios-${{ steps.release.outputs.marketing_version }}-${{ steps.release.outputs.build_number }}

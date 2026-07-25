@@ -24,5 +24,5 @@ export default defineConfig({
     viewport: { width: 760, height: 480 },
   },
   outputDir: "../test-results/terminal-host",
-  snapshotPathTemplate: "{testDir}/snapshots/{arg}{ext}",
+  snapshotPathTemplate: "{testDir}/snapshots/{platform}/{arg}{ext}",
 });
