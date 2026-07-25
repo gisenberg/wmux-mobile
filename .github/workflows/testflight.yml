@@ -1,0 +1,120 @@
+name: TestFlight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Build and upload
+    environment: TestFlight
+    runs-on:
+      - self-hosted
+      - macOS
+      - ARM64
+      - wmux-mobile
+    timeout-minutes: 120
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_KEY_ISSUER_ID: ${{ secrets.ASC_API_KEY_ISSUER_ID }}
+      ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          cache: npm
+          node-version: 22.13.1
+
+      - name: Install JavaScript dependencies
+        run: rtk npm ci
+
+      - name: Run release gate
+        run: rtk npm run check
+
+      - name: Prepare App Store Connect authentication
+        id: release
+        env:
+          ASC_API_PRIVATE_KEY: ${{ secrets.ASC_API_PRIVATE_KEY }}
+        run: rtk node scripts/ci/prepare-testflight.mjs
+
+      - name: Generate the iOS project
+        run: rtk npx expo prebuild --platform ios --clean --no-install
+
+      - name: Install CocoaPods
+        run: rtk pod install --project-directory=ios --repo-update
+
+      - name: Archive the application
+        run: |
+          rtk xcodebuild \
+            -workspace ios/wmux.xcworkspace \
+            -scheme wmux \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/testflight-archive.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_API_KEY_PATH" \
+            -authenticationKeyID "$ASC_API_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_API_KEY_ISSUER_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            MARKETING_VERSION="$IOS_MARKETING_VERSION" \
+            clean archive
+
+      - name: Export the signed IPA
+        run: |
+          rtk xcodebuild \
+            -exportArchive \
+            -archivePath "$RUNNER_TEMP/testflight-archive.xcarchive" \
+            -exportPath "$RUNNER_TEMP/testflight-export" \
+            -exportOptionsPlist .github/testflight/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_API_KEY_PATH" \
+            -authenticationKeyID "$ASC_API_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_API_KEY_ISSUER_ID"
+
+      - name: Validate the signed IPA
+        run: |
+          rtk env API_PRIVATE_KEYS_DIR="$RUNNER_TEMP" xcrun altool \
+            --validate-app \
+            --file "$RUNNER_TEMP/testflight-export/wmux.ipa" \
+            --type ios \
+            --apiKey "$ASC_API_KEY_ID" \
+            --apiIssuer "$ASC_API_KEY_ISSUER_ID"
+
+      - name: Upload to TestFlight
+        run: |
+          rtk env API_PRIVATE_KEYS_DIR="$RUNNER_TEMP" xcrun altool \
+            --upload-app \
+            --file "$RUNNER_TEMP/testflight-export/wmux.ipa" \
+            --type ios \
+            --apiKey "$ASC_API_KEY_ID" \
+            --apiIssuer "$ASC_API_KEY_ISSUER_ID"
+
+      - name: Preserve release artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          compression-level: 0
+          name: wmux-ios-${{ steps.release.outputs.marketing_version }}-${{ steps.release.outputs.build_number }}
+          path: |
+            ${{ runner.temp }}/testflight-export/wmux.ipa
+            ${{ runner.temp }}/testflight-archive.xcarchive/dSYMs
+          retention-days: 14
+
+      - name: Remove the temporary App Store key
+        if: always()
+        run: rtk node scripts/ci/cleanup-testflight.mjs

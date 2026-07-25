@@ -1,0 +1,32 @@
+name: Protocol upstream
+
+on:
+  schedule:
+    - cron: "23 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - id: compare
+        continue-on-error: true
+        run: node scripts/check-protocol-upstream.mjs
+      - if: steps.compare.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing="$(gh issue list --state open --search 'Protocol pin is behind wmux main in:title' --json number --jq '.[0].number // empty')"
+          if [ -z "$existing" ]; then
+            gh issue create \
+              --title "Protocol pin is behind wmux main" \
+              --body "The scheduled protocol check found that protocol/SOURCE no longer matches wmux main. Run npm run sync:protocol against an updated adjacent wmux checkout and review the contract changes."
+          fi

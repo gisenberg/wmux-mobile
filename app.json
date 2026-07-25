@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "wmux",
+    "slug": "wmux-mobile",
+    "version": "0.1.0",
+    "scheme": "wmux",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "com.gisenberg.wmuxmobile",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "supportsTablet": false
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#080a0e",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "package": "com.gisenberg.wmuxmobile",
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      "expo-dev-client",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": false,
+          "microphonePermission": false,
+          "photosPermission": "Allow wmux to attach an image you choose to the active terminal session."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#080a0e",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain"
+        }
+      ],
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

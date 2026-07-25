@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/gisenberg/wmux",
+  "wmuxCommit": "8488e2396bc33f004389cb4bdb3d02d537f1d03c",
+  "sources": [
+    {
+      "sourcePath": "src/client/src/terminal-osc52.ts",
+      "destination": "terminal-osc52.ts",
+      "sourceSha256": "cb305a547a74ff99fc6117f7b61108ef575f5b587167fa00dd1288c4e056926a",
+      "generatedSha256": "4e03dc9dc57a374713c05c299e702482cd0f01d138a812b7fff2fa5ca67f6d95"
+    },
+    {
+      "sourcePath": "src/client/src/kitty-graphics.ts",
+      "destination": "kitty-graphics.ts",
+      "sourceSha256": "50e5bcb3f25a0670bd68f795fc87d18e7e78e0a5ad82b8828dc4f5c309cbe1c8",
+      "generatedSha256": "bddceb8ad677e8b614affee49b899d0d7a55b0f75ab62465ec4becab63c99123"
+    },
+    {
+      "sourcePath": "src/client/src/color-schemes.ts",
+      "destination": "color-schemes.ts",
+      "sourceSha256": "67c82ba633a7d4a1aade9828240122091f8e7686ef37307d9c67a8da55dc7698",
+      "generatedSha256": "ff66f9baea45aed520cad7c3c3337fa7163cee2278304a9d4b51e52f7ec6a41a"
+    }
+  ]
+}
