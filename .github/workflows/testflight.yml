@@ -65,6 +65,8 @@ jobs:
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
             -archivePath "$RUNNER_TEMP/testflight-archive.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/testflight-derived-data" \
+            -resultBundlePath "$RUNNER_TEMP/testflight-result.xcresult" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$ASC_API_KEY_PATH" \
             -authenticationKeyID "$ASC_API_KEY_ID" \
@@ -116,6 +118,15 @@ jobs:
             ${{ runner.temp }}/testflight-export/wmux.ipa
             ${{ runner.temp }}/testflight-archive.xcarchive/dSYMs
           retention-days: 14
+
+      - name: Preserve build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          compression-level: 0
+          name: wmux-ios-build-diagnostics
+          path: ${{ runner.temp }}/testflight-result.xcresult
+          retention-days: 7
 
       - name: Remove the temporary App Store key
         if: always()
