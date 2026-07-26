@@ -61,6 +61,7 @@ jobs:
             -workspace ios/wmux.xcworkspace \
             -scheme wmux \
             -configuration Release \
+            -quiet \
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
             -archivePath "$RUNNER_TEMP/testflight-archive.xcarchive" \
@@ -78,6 +79,7 @@ jobs:
         run: |
           rtk xcodebuild \
             -exportArchive \
+            -quiet \
             -archivePath "$RUNNER_TEMP/testflight-archive.xcarchive" \
             -exportPath "$RUNNER_TEMP/testflight-export" \
             -exportOptionsPlist .github/testflight/ExportOptions.plist \
