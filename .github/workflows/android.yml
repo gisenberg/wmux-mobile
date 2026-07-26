@@ -1,0 +1,78 @@
+name: Android
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/android.yml"
+      - "app/**"
+      - "app.json"
+      - "assets/**"
+      - "docker/android/**"
+      - "metro.config.js"
+      - "modules/**"
+      - "package-lock.json"
+      - "package.json"
+      - "scripts/ci/build-android.sh"
+      - "src/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - homelab
+      - android
+      - wmux-mobile
+    timeout-minutes: 120
+    env:
+      ANDROID_IMAGE: wmux-mobile-android-ci:latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          clean: true
+
+      - name: Prepare persistent build caches
+        run: |
+          rtk mkdir -p "$HOME/.cache/wmux-mobile-android/gradle"
+          rtk mkdir -p "$HOME/.cache/wmux-mobile-android/npm"
+
+      - name: Build the pinned Android toolchain image
+        run: |
+          rtk docker build \
+            --file docker/android/Dockerfile \
+            --tag "$ANDROID_IMAGE" \
+            docker/android
+
+      - name: Build the debug APK
+        run: |
+          rtk docker run --rm \
+            --env CI=true \
+            --env GRADLE_USER_HOME=/home/node/.gradle \
+            --env PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace" \
+            --mount "type=bind,source=$HOME/.cache/wmux-mobile-android/gradle,target=/home/node/.gradle" \
+            --mount "type=bind,source=$HOME/.cache/wmux-mobile-android/npm,target=/home/node/.npm" \
+            --workdir /workspace \
+            "$ANDROID_IMAGE" \
+            scripts/ci/build-android.sh
+
+      - name: Preserve the installable APK
+        uses: actions/upload-artifact@v7
+        with:
+          compression-level: 0
+          name: wmux-android-debug-${{ github.sha }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14

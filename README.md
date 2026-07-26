@@ -36,6 +36,13 @@ Expo Go is intentionally unsupported.
 The native input module requires a development build.
 The native run and Metro scripts build the self-contained offline terminal host before starting Expo.
 
+## CI and Android builds
+
+The main CI workflow runs in a pinned Playwright Ubuntu container on the repository-scoped `homelab-wmux-mobile` self-hosted runner.
+The Android workflow uses the same runner and builds inside the pinned toolchain defined by `docker/android/Dockerfile`, so the host does not need an Android SDK installation.
+It produces an installable debug APK and retains it as a GitHub Actions artifact for 14 days.
+The Docker build cache plus persistent npm and Gradle caches remain on `homelab` between jobs.
+
 ## TestFlight
 
 The manually dispatched GitHub Actions workflow builds, signs, validates, and uploads a release from the repository-specific registration on the shared self-hosted Mac.
