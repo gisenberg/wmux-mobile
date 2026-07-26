@@ -1,7 +1,7 @@
 # TestFlight delivery
 
 The TestFlight workflow runs only when manually dispatched from GitHub Actions.
-It uses the dedicated `wmux-mobile` registration on the shared Away-Team Mac, runs the full project gate, creates a clean Expo iOS project, archives and signs the release with Xcode, validates the IPA, and uploads it to App Store Connect.
+It uses the dedicated `wmux-mobile` registration on the shared Away-Team Mac, runs the full project gate, creates a clean Expo iOS project, archives and signs the release with Xcode, and uploads it to App Store Connect with Apple Transporter.
 
 ## Repository secrets
 
@@ -14,13 +14,15 @@ The repository must define these Actions secrets:
 - `ASC_API_PRIVATE_KEY`
 
 `ASC_API_PRIVATE_KEY` may contain the PEM file verbatim or its base64 representation.
-The workflow materializes it under `RUNNER_TEMP`, gives it owner-only permissions, and removes it in an always-running cleanup step.
+The workflow materializes it under `RUNNER_TEMP/private_keys`, gives it owner-only permissions, and removes it in an always-running cleanup step.
 No Apple credential is stored in the repository or build artifacts.
 
 ## Runner
 
 The workflow selects a self-hosted runner with the standard `self-hosted`, `macOS`, and `ARM64` labels plus the custom `wmux-mobile` label.
-The runner needs Xcode, CocoaPods, Node.js bootstrap access, RTK, an Apple Distribution identity for the configured team, and network access to npm, CocoaPods, GitHub, and Apple.
+The runner needs Xcode, CocoaPods, Apple Transporter, Node.js bootstrap access, RTK, an Apple Distribution identity for the configured team, and network access to npm, CocoaPods, GitHub, and Apple.
+The runner process must share the logged-in user security session so `codesign` can access the signing identity's private key.
+A background launch session without signing-key access fails embedded-framework signing with `errSecInternalComponent`.
 
 The App Store provisioning profile is created or refreshed by Xcode automatic signing through the App Store Connect API key.
 The runner registration is repository-scoped, so the shared Mac uses a separate runner service for each GitHub repository.

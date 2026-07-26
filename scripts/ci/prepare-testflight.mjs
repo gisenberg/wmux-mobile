@@ -122,7 +122,8 @@ if (typeof marketingVersion !== "string" || !/^\d+(?:\.\d+){1,2}$/.test(marketin
   throw new Error(`Invalid Expo application version: ${String(marketingVersion)}`);
 }
 
-const keyDirectory = process.env.RUNNER_TEMP?.trim() || tmpdir();
+const keyRootDirectory = process.env.RUNNER_TEMP?.trim() || tmpdir();
+const keyDirectory = join(keyRootDirectory, "private_keys");
 await mkdir(keyDirectory, { recursive: true });
 const keyPath = join(keyDirectory, `AuthKey_${keyId}.p8`);
 await writeFile(keyPath, `${privateKey}\n`, { mode: 0o600 });

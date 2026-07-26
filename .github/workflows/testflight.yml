@@ -90,23 +90,16 @@ jobs:
             -authenticationKeyID "$ASC_API_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_API_KEY_ISSUER_ID"
 
-      - name: Validate the signed IPA
-        run: |
-          rtk env API_PRIVATE_KEYS_DIR="$RUNNER_TEMP" xcrun altool \
-            --validate-app \
-            --file "$RUNNER_TEMP/testflight-export/wmux.ipa" \
-            --type ios \
-            --apiKey "$ASC_API_KEY_ID" \
-            --apiIssuer "$ASC_API_KEY_ISSUER_ID"
-
       - name: Upload to TestFlight
+        working-directory: ${{ runner.temp }}
         run: |
-          rtk env API_PRIVATE_KEYS_DIR="$RUNNER_TEMP" xcrun altool \
-            --upload-app \
-            --file "$RUNNER_TEMP/testflight-export/wmux.ipa" \
-            --type ios \
-            --apiKey "$ASC_API_KEY_ID" \
-            --apiIssuer "$ASC_API_KEY_ISSUER_ID"
+          rtk /Applications/Transporter.app/Contents/itms/bin/iTMSTransporter \
+            -m upload \
+            -apiIssuer "$ASC_API_KEY_ISSUER_ID" \
+            -apiKey "$ASC_API_KEY_ID" \
+            -assetFile "$RUNNER_TEMP/testflight-export/wmux.ipa" \
+            -v informational \
+            -vp text
 
       - name: Preserve release artifacts
         if: success()
