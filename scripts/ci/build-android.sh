@@ -5,4 +5,4 @@ set -euo pipefail
 npm ci
 npm run build:host
 npx expo prebuild --platform android --clean --no-install
-./android/gradlew --no-daemon --stacktrace :app:assembleDebug
+./android/gradlew --project-dir android --no-daemon --stacktrace :app:assembleDebug
