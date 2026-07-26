@@ -9,6 +9,11 @@ import { colorSchemeById } from "./vendor/wmux/color-schemes";
 
 const REPLAY_CHUNK_CHARACTERS = 128 * 1024;
 const RECONNECT_MAX_MS = 8_000;
+const DURABLE_REFRESH_FIRST_NUDGE_MS = 120;
+const DURABLE_REFRESH_QUIET_MS = 80;
+const DURABLE_REFRESH_FALLBACK_MS = 700;
+const EMPTY_REPLAY_REPAINT_MS = 700;
+const REPAINT_INPUT = "\x0c";
 
 interface TerminalSessionOptions {
   paneId: string;
@@ -65,9 +70,16 @@ export class TerminalSession {
   private selectionRange: { start: CellPoint; end: CellPoint } | undefined;
   private replayGeneration = 0;
   private replayTimer: number | undefined;
+  private emptyReplayRepaintTimer: number | undefined;
   private replaying = false;
   private bufferedOutput: string[] = [];
   private lastReplayKind: PaneReplayKind | undefined;
+  private durableRefreshGeneration = 0;
+  private durableRefreshStartedAt = 0;
+  private durableRefreshOutput: string[] = [];
+  private durableRefreshQuietTimer: number | undefined;
+  private durableRefreshFallbackTimer: number | undefined;
+  private waitingForDurableRefresh = false;
   private selectionFrame: number | undefined;
   private selectionIncludeText = false;
 
@@ -253,6 +265,8 @@ export class TerminalSession {
     this.disposed = true;
     this.replayGeneration += 1;
     if (this.replayTimer !== undefined) window.clearTimeout(this.replayTimer);
+    this.clearEmptyReplayRepaintTimer();
+    this.cancelDurableRefresh();
     if (this.selectionFrame !== undefined) window.cancelAnimationFrame(this.selectionFrame);
     this.clearReconnectTimer();
     this.closeSocket();
@@ -284,7 +298,7 @@ export class TerminalSession {
 
   private bindTerminalEvents(): void {
     this.disposables.push(
-      this.terminal.onData((data) => this.sendInput(data, true)),
+      this.terminal.onData((data) => this.sendTerminalResponse(data)),
       this.terminal.onResize(() => {
         this.emitMetrics();
         this.emitCursor();
@@ -319,13 +333,19 @@ export class TerminalSession {
     if (message.type === "ready") {
       this.exited = false;
       this.lastReplayKind = message.replayKind;
-      this.startReplay(message.replay);
+      if (shouldWaitForDurableRefresh(message)) {
+        this.beginDurableRefresh();
+      } else {
+        this.cancelDurableRefresh();
+        this.startReplay(message.replay);
+      }
       this.emit({ t: "title", paneId: this.paneId, title: message.title });
       this.emit({ t: "pane", paneId: this.paneId, state: "live" });
       this.sendResize(this.visible);
       return;
     }
     if (message.type === "output") {
+      if (this.bufferDurableRefreshOutput(message.data)) return;
       if (this.replaying) this.bufferedOutput.push(message.data);
       else this.pipeline.push(message.data);
       return;
@@ -335,6 +355,7 @@ export class TerminalSession {
       return;
     }
     if (message.type === "exit") {
+      this.cancelDurableRefresh();
       this.exited = true;
       this.emit({ t: "exit", paneId: this.paneId, code: message.code });
       this.emit({
@@ -345,15 +366,17 @@ export class TerminalSession {
       });
       return;
     }
+    this.cancelDurableRefresh();
     this.removed = true;
     this.emit({ t: "pane", paneId: this.paneId, state: "lost", issue: "Pane was removed" });
     this.closeSocket();
   }
 
-  private startReplay(replay: string): void {
+  private startReplay(replay: string, onDrained?: () => void): void {
     this.replayGeneration += 1;
     const generation = this.replayGeneration;
     if (this.replayTimer !== undefined) window.clearTimeout(this.replayTimer);
+    this.clearEmptyReplayRepaintTimer();
     this.replaying = true;
     this.bufferedOutput = [];
     this.pipeline.reset();
@@ -378,6 +401,8 @@ export class TerminalSession {
       const buffered = this.bufferedOutput;
       this.bufferedOutput = [];
       for (const output of buffered) this.pipeline.push(output);
+      if (onDrained) onDrained();
+      else this.scheduleEmptyReplayRepaint(generation);
       window.requestAnimationFrame(() => {
         if (this.disposed || generation !== this.replayGeneration) return;
         this.redrawVisibleTerminal();
@@ -386,6 +411,72 @@ export class TerminalSession {
       });
     };
     drain();
+  }
+
+  private beginDurableRefresh(): void {
+    this.cancelDurableRefresh();
+    this.replayGeneration += 1;
+    if (this.replayTimer !== undefined) window.clearTimeout(this.replayTimer);
+    this.clearEmptyReplayRepaintTimer();
+    this.replayTimer = undefined;
+    this.replaying = false;
+    this.bufferedOutput = [];
+    this.waitingForDurableRefresh = true;
+    this.durableRefreshStartedAt = Date.now();
+    const generation = this.durableRefreshGeneration;
+    this.durableRefreshFallbackTimer = window.setTimeout(() => {
+      this.finishDurableRefresh(generation);
+    }, DURABLE_REFRESH_FALLBACK_MS);
+  }
+
+  private bufferDurableRefreshOutput(data: string): boolean {
+    if (!this.waitingForDurableRefresh) return false;
+    this.durableRefreshOutput.push(data);
+    if (this.durableRefreshQuietTimer !== undefined) window.clearTimeout(this.durableRefreshQuietTimer);
+    const generation = this.durableRefreshGeneration;
+    const now = Date.now();
+    const settleAt = Math.max(
+      this.durableRefreshStartedAt + DURABLE_REFRESH_FIRST_NUDGE_MS + DURABLE_REFRESH_QUIET_MS,
+      now + DURABLE_REFRESH_QUIET_MS,
+    );
+    this.durableRefreshQuietTimer = window.setTimeout(
+      () => {
+        this.finishDurableRefresh(generation);
+      },
+      Math.max(0, settleAt - now),
+    );
+    return true;
+  }
+
+  private finishDurableRefresh(generation: number): void {
+    if (!this.waitingForDurableRefresh || generation !== this.durableRefreshGeneration) return;
+    const refresh = this.durableRefreshOutput.join("");
+    this.clearDurableRefreshState();
+    if (refresh) {
+      this.startReplay(refresh, () => this.requestDurableRepaintIfBlank(generation));
+      return;
+    }
+    this.requestDurableRepaintIfBlank(generation);
+    window.requestAnimationFrame(() => {
+      if (this.disposed || generation !== this.durableRefreshGeneration) return;
+      this.redrawVisibleTerminal();
+      this.emitMetrics();
+      this.emitCursor();
+    });
+  }
+
+  private cancelDurableRefresh(): void {
+    this.durableRefreshGeneration += 1;
+    this.clearDurableRefreshState();
+  }
+
+  private clearDurableRefreshState(): void {
+    if (this.durableRefreshQuietTimer !== undefined) window.clearTimeout(this.durableRefreshQuietTimer);
+    if (this.durableRefreshFallbackTimer !== undefined) window.clearTimeout(this.durableRefreshFallbackTimer);
+    this.durableRefreshQuietTimer = undefined;
+    this.durableRefreshFallbackTimer = undefined;
+    this.durableRefreshOutput = [];
+    this.waitingForDurableRefresh = false;
   }
 
   private redrawVisibleTerminal(): void {
@@ -397,6 +488,48 @@ export class TerminalSession {
     renderer.render(terminal, true, this.terminal.viewportY, this.terminal);
   }
 
+  private requestDurableRepaintIfBlank(generation: number): void {
+    if (
+      this.disposed ||
+      generation !== this.durableRefreshGeneration ||
+      this.socket?.readyState !== WebSocket.OPEN ||
+      this.terminalHasVisibleText()
+    ) {
+      return;
+    }
+    this.sendInput(REPAINT_INPUT);
+  }
+
+  private scheduleEmptyReplayRepaint(generation: number): void {
+    this.clearEmptyReplayRepaintTimer();
+    this.emptyReplayRepaintTimer = window.setTimeout(() => {
+      this.emptyReplayRepaintTimer = undefined;
+      if (
+        this.disposed ||
+        generation !== this.replayGeneration ||
+        this.socket?.readyState !== WebSocket.OPEN ||
+        this.terminalHasVisibleText()
+      ) {
+        return;
+      }
+      this.sendInput(REPAINT_INPUT);
+    }, EMPTY_REPLAY_REPAINT_MS);
+  }
+
+  private clearEmptyReplayRepaintTimer(): void {
+    if (this.emptyReplayRepaintTimer !== undefined) window.clearTimeout(this.emptyReplayRepaintTimer);
+    this.emptyReplayRepaintTimer = undefined;
+  }
+
+  private terminalHasVisibleText(): boolean {
+    const buffer = this.terminal.buffer.active;
+    const start = Math.max(0, buffer.length - this.terminal.rows);
+    for (let row = start; row < buffer.length; row += 1) {
+      if ((buffer.getLine(row)?.translateToString(true).trim().length ?? 0) > 0) return true;
+    }
+    return false;
+  }
+
   private sendKey(message: Extract<ToHost, { t: "key" }>): void {
     if (this.exited) {
       this.reconnect("Restarting pane");
@@ -406,13 +539,18 @@ export class TerminalSession {
     if (data) this.sendInput(data);
   }
 
-  private sendInput(data: string, terminalResponse = false): void {
+  private sendInput(data: string): void {
     if (!data) return;
     this.terminal.clearSelection();
     this.selectionAnchor = undefined;
     this.selectionRange = undefined;
     this.terminal.scrollToBottom();
-    this.sendSocketMessage({ type: "input", data, terminalResponse });
+    this.sendSocketMessage({ type: "input", data, terminalResponse: false });
+  }
+
+  private sendTerminalResponse(data: string): void {
+    if (!data) return;
+    this.sendSocketMessage({ type: "input", data, terminalResponse: true });
   }
 
   private bracketedPaste(text: string): string {
@@ -691,5 +829,8 @@ const decodePaneServerMessage = (value: string, paneId: string): PaneServerMessa
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const shouldWaitForDurableRefresh = (message: Extract<PaneServerMessage, { type: "ready" }>): boolean =>
+  message.waitForRefresh === true && message.replayKind === "raw" && message.replay === "";
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.min(Math.max(value, minimum), maximum);

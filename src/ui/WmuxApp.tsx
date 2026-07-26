@@ -206,40 +206,7 @@ export function WmuxApp() {
           if (next) setNavigationPreference(next.selection);
           return;
         }
-        if (action.type === "create-tab") {
-          const result = await connection.mutate((client) =>
-            client.createTab(navigation.workspace.id, action.machineId, navigation.pane.id),
-          );
-          const next = result
-            ? resolveNavigation(result.state, {
-                tabId: result.tab.id,
-                workspaceId: navigation.workspace.id,
-              })
-            : null;
-          if (next) setNavigationPreference(next.selection);
-          return;
-        }
-        if (action.type === "split") {
-          const result = await connection.mutate((client) =>
-            client.splitPane(navigation.tab.id, navigation.pane.id, action.direction, action.machineId),
-          );
-          const next = result
-            ? resolveNavigation(result.state, {
-                paneId: result.tab.activePaneId,
-                tabId: result.tab.id,
-                workspaceId: navigation.workspace.id,
-              })
-            : null;
-          if (next) setNavigationPreference(next.selection);
-          return;
-        }
-
-        const result =
-          action.type === "close-pane"
-            ? await connection.mutate((client) => client.closePane(navigation.tab.id, navigation.pane.id))
-            : action.type === "close-tab"
-              ? await connection.mutate((client) => client.closeTab(navigation.workspace.id, navigation.tab.id))
-              : await connection.mutate((client) => client.closeWorkspace(navigation.workspace.id));
+        const result = await connection.mutate((client) => client.closeWorkspace(navigation.workspace.id));
         const next = result ? resolveNavigation(result.state, navigation.selection) : null;
         setNavigationPreference(next?.selection ?? null);
       } finally {
@@ -251,17 +218,16 @@ export function WmuxApp() {
 
   const handleWorkspaceAction = useCallback(
     (action: WorkspaceAction): void => {
-      if (!action.type.startsWith("close-")) {
+      if (action.type === "create-workspace") {
         void performWorkspaceAction(action);
         return;
       }
-      const target = action.type.replace("close-", "");
-      Alert.alert(`Close ${target}?`, `The current ${target} and its running session will be closed.`, [
+      Alert.alert("Close workspace?", "The current workspace and its running sessions will be closed.", [
         { style: "cancel", text: "Cancel" },
         {
           onPress: () => void performWorkspaceAction(action),
           style: "destructive",
-          text: `Close ${target}`,
+          text: "Close workspace",
         },
       ]);
     },
@@ -325,7 +291,6 @@ export function WmuxApp() {
             bootstrap={showDashboard.bootstrap}
             endpoint={connection.endpoint}
             error={connection.error}
-            isLandscape={isLandscape}
             mutationBusy={mutationBusy}
             navigation={showDashboard.navigation}
             onAction={handleWorkspaceAction}
@@ -717,7 +682,7 @@ function TerminalTouchDiagnostics({ onFocusInput }: { onFocusInput: () => void }
 
 function NavigationDiagnosticsCard({ isLandscape, onClose }: { isLandscape: boolean; onClose: () => void }) {
   const [bootstrap, setBootstrap] = useState(navigationFixture);
-  const [lastAction, setLastAction] = useState("Open the drawer, switch tabs, select a pane, or use the action sheet.");
+  const [lastAction, setLastAction] = useState("Open the drawer, create a workspace, or select a pane.");
   const [preference, setPreference] = useState<NavigationSelection | null>(null);
   const [surface, setSurface] = useState<WorkspaceSurface>("terminal");
   const navigation = useMemo(() => resolveNavigation(bootstrap, preference), [bootstrap, preference]);
@@ -751,7 +716,6 @@ function NavigationDiagnosticsCard({ isLandscape, onClose }: { isLandscape: bool
       </View>
       <WorkspaceChrome
         bootstrap={bootstrap}
-        isLandscape={isLandscape}
         navigation={navigation}
         onAction={(action) => setLastAction(`Action reached: ${action.type.replaceAll("-", " ")}`)}
         onForget={() => setLastAction("Change server action reached")}
@@ -968,7 +932,6 @@ interface DashboardProps {
   bootstrap: BootstrapPayload;
   endpoint: string;
   error: string | null;
-  isLandscape: boolean;
   mutationBusy: boolean;
   navigation: ResolvedNavigation;
   onAction: (action: WorkspaceAction) => void;
@@ -989,7 +952,6 @@ function Dashboard({
   bootstrap,
   endpoint,
   error,
-  isLandscape,
   mutationBusy,
   navigation,
   onAction,
@@ -1037,7 +999,6 @@ function Dashboard({
     <WorkspaceChrome
       bootstrap={bootstrap}
       edgeSwipeEnabled
-      isLandscape={isLandscape}
       mutationBusy={mutationBusy}
       navigation={navigation}
       onAction={onAction}

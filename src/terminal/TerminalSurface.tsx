@@ -68,7 +68,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
         await asset.downloadAsync();
         const uri = asset.localUri ?? asset.uri;
         if (!uri) throw new Error("The terminal host asset is unavailable");
-        const contents = await new File(uri).text();
+        const contents = await readTerminalHostAsset(uri);
         if (!cancelled) setHtml(contents);
       } catch (error: unknown) {
         if (!cancelled) setIssue(error instanceof Error ? error.message : "Could not load the terminal host");
@@ -172,6 +172,18 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
     </View>
   );
 });
+
+async function readTerminalHostAsset(uri: string): Promise<string> {
+  try {
+    return await new File(uri).text();
+  } catch (fileError: unknown) {
+    try {
+      return await (await fetch(uri)).text();
+    } catch {
+      throw fileError;
+    }
+  }
+}
 
 function TerminalSurfaceOverlay({
   issue,

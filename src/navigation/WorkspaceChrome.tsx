@@ -2,24 +2,13 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
-import {
-  TERMINAL_COLOR_SCHEME_IDS,
-  type BootstrapPayload,
-  type SplitDirection,
-  type WmuxSettings,
-} from "../../protocol/wmux";
+import { TERMINAL_COLOR_SCHEME_IDS, type BootstrapPayload, type WmuxSettings } from "../../protocol/wmux";
 
 import { chromeTheme, type ChromeTheme } from "@/navigation/chrome-theme";
 import type { ResolvedNavigation } from "@/navigation/model";
 import { fonts } from "@/ui/theme";
 
-export type WorkspaceAction =
-  | { type: "create-workspace"; machineId: string }
-  | { type: "create-tab"; machineId: string }
-  | { type: "split"; direction: SplitDirection; machineId: string }
-  | { type: "close-pane" }
-  | { type: "close-tab" }
-  | { type: "close-workspace" };
+export type WorkspaceAction = { type: "create-workspace"; machineId: string } | { type: "close-workspace" };
 
 export type WorkspaceSurface = "chat" | "terminal";
 
@@ -27,7 +16,6 @@ interface WorkspaceChromeProps {
   bootstrap: BootstrapPayload;
   children: ReactNode;
   edgeSwipeEnabled?: boolean;
-  isLandscape: boolean;
   mutationBusy?: boolean;
   navigation: ResolvedNavigation;
   onAction: (action: WorkspaceAction) => void;
@@ -44,7 +32,6 @@ export function WorkspaceChrome({
   bootstrap,
   children,
   edgeSwipeEnabled = true,
-  isLandscape,
   mutationBusy = false,
   navigation,
   onAction,
@@ -56,7 +43,6 @@ export function WorkspaceChrome({
   onUpdateSettings,
   surface,
 }: WorkspaceChromeProps) {
-  const [actionsOpen, setActionsOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const theme = chromeTheme(bootstrap.settings.colorScheme);
@@ -101,9 +87,6 @@ export function WorkspaceChrome({
           <Text numberOfLines={1} style={[styles.workspaceName, { color: theme.text }]}>
             {navigation.workspace.name}
           </Text>
-          <Text numberOfLines={1} style={[styles.workspaceContext, { color: theme.muted }]}>
-            {navigation.tab.title}
-          </Text>
         </View>
         <View style={[styles.surfaceSwitcher, { backgroundColor: theme.canvas, borderColor: theme.line }]}>
           <SurfaceButton
@@ -120,158 +103,41 @@ export function WorkspaceChrome({
           />
         </View>
         <Pressable
-          accessibilityLabel="Open workspace actions"
+          accessibilityLabel={`Close ${navigation.workspace.name} workspace`}
           accessibilityRole="button"
-          onPress={() => setActionsOpen(true)}
+          disabled={mutationBusy}
+          onPress={() => onAction({ type: "close-workspace" })}
           style={({ pressed }) => [
             styles.squareButton,
-            { backgroundColor: theme.accentDim, borderColor: theme.line },
+            styles.closeWorkspaceButton,
+            mutationBusy && styles.disabled,
             pressed && styles.pressed,
           ]}
         >
-          <Text style={[styles.squareButtonText, { color: theme.accent }]}>＋</Text>
+          <Text style={[styles.squareButtonText, styles.closeWorkspaceGlyph]}>×</Text>
         </Pressable>
       </View>
-
-      <View style={[styles.tabBar, { backgroundColor: theme.canvas, borderColor: theme.line }]}>
-        <ScrollView
-          bounces={false}
-          contentContainerStyle={styles.tabBarContent}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-        >
-          {navigation.workspace.tabs.map((tab) => {
-            const active = tab.id === navigation.tab.id;
-            return (
-              <Pressable
-                accessibilityLabel={`${tab.title} tab`}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: active }}
-                key={tab.id}
-                onPress={() => {
-                  const pane = tab.panes.find((candidate) => candidate.id === tab.activePaneId) ?? tab.panes[0];
-                  if (!pane) return;
-                  onNavigate({
-                    pane,
-                    selection: {
-                      paneId: pane.id,
-                      tabId: tab.id,
-                      workspaceId: navigation.workspace.id,
-                    },
-                    tab,
-                    workspace: navigation.workspace,
-                  });
-                }}
-                style={({ pressed }) => [
-                  styles.tabPill,
-                  { borderColor: active ? theme.accent : theme.line },
-                  active && { backgroundColor: theme.accentDim },
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text numberOfLines={1} style={[styles.tabLabel, { color: active ? theme.accent : theme.muted }]}>
-                  {tab.title}
-                </Text>
-                {tab.panes.length > 1 ? (
-                  <Text style={[styles.tabCount, { color: active ? theme.accent : theme.muted }]}>
-                    {tab.panes.length}
-                  </Text>
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      {navigation.tab.panes.length > 1 ? (
-        <View style={[styles.paneBar, { backgroundColor: theme.panel, borderColor: theme.line }]}>
-          <Text style={[styles.paneBarLabel, { color: theme.muted }]}>PANES</Text>
-          <ScrollView
-            bounces={false}
-            contentContainerStyle={styles.paneBarContent}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-          >
-            {navigation.tab.panes.map((pane) => {
-              const active = pane.id === navigation.pane.id;
-              return (
-                <Pressable
-                  accessibilityLabel={`${pane.title} pane`}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: active }}
-                  key={pane.id}
-                  onPress={() =>
-                    onNavigate({
-                      ...navigation,
-                      pane,
-                      selection: { ...navigation.selection, paneId: pane.id },
-                    })
-                  }
-                  style={({ pressed }) => [
-                    styles.panePill,
-                    { borderColor: active ? theme.accent : theme.line },
-                    active && { backgroundColor: theme.accentDim },
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.paneStatus,
-                      {
-                        backgroundColor:
-                          pane.status === "running" ? "#67d391" : pane.status === "exited" ? "#ef7770" : theme.muted,
-                      },
-                    ]}
-                  />
-                  <Text style={[styles.paneLabel, { color: active ? theme.text : theme.muted }]}>{pane.title}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
-      ) : null}
 
       {children}
 
       <WorkspaceDrawer
         bootstrap={bootstrap}
+        busy={mutationBusy}
         navigation={navigation}
         onClose={() => setDrawerOpen(false)}
+        onCreateWorkspace={(machineId) => {
+          onAction({ type: "create-workspace", machineId });
+          setDrawerOpen(false);
+        }}
         onNavigate={(next) => {
           onNavigate(next);
           setDrawerOpen(false);
         }}
-        open={drawerOpen}
-        theme={theme}
-      />
-      <WorkspaceActionSheet
-        key={navigation.pane.id}
-        bootstrap={bootstrap}
-        busy={mutationBusy}
-        isLandscape={isLandscape}
-        navigation={navigation}
-        onAction={(action) => {
-          onAction(action);
-          setActionsOpen(false);
-        }}
-        onClose={() => setActionsOpen(false)}
-        onOpenDiagnostics={() => {
-          setActionsOpen(false);
-          onOpenDiagnostics();
-        }}
-        onForget={() => {
-          setActionsOpen(false);
-          onForget();
-        }}
-        onRefresh={() => {
-          setActionsOpen(false);
-          onRefresh();
-        }}
         onOpenSettings={() => {
-          setActionsOpen(false);
+          setDrawerOpen(false);
           setSettingsOpen(true);
         }}
-        open={actionsOpen}
+        open={drawerOpen}
         theme={theme}
       />
       <WorkspaceSettingsSheet
@@ -280,6 +146,18 @@ export function WorkspaceChrome({
           setSettingsOpen(false);
         }}
         onClose={() => setSettingsOpen(false)}
+        onForget={() => {
+          setSettingsOpen(false);
+          onForget();
+        }}
+        onOpenDiagnostics={() => {
+          setSettingsOpen(false);
+          onOpenDiagnostics();
+        }}
+        onRefresh={() => {
+          setSettingsOpen(false);
+          onRefresh();
+        }}
         open={settingsOpen}
         settings={bootstrap.settings}
         theme={theme}
@@ -317,16 +195,22 @@ function SurfaceButton({
 
 function WorkspaceDrawer({
   bootstrap,
+  busy,
   navigation,
   onClose,
+  onCreateWorkspace,
   onNavigate,
+  onOpenSettings,
   open,
   theme,
 }: {
   bootstrap: BootstrapPayload;
+  busy: boolean;
   navigation: ResolvedNavigation;
   onClose: () => void;
+  onCreateWorkspace: (machineId: string) => void;
   onNavigate: (navigation: ResolvedNavigation) => void;
+  onOpenSettings: () => void;
   open: boolean;
   theme: ChromeTheme;
 }) {
@@ -355,11 +239,49 @@ function WorkspaceDrawer({
           <View style={styles.sheetHeader}>
             <View>
               <Text style={[styles.sheetKicker, { color: theme.accent }]}>NAVIGATION</Text>
-              <Text style={[styles.sheetTitle, { color: theme.text }]}>Workspaces</Text>
+              <Text style={[styles.sheetTitle, { color: theme.text }]}>Spaces</Text>
             </View>
             <SheetCloseButton onPress={onClose} theme={theme} />
           </View>
           <ScrollView contentContainerStyle={styles.drawerList} showsVerticalScrollIndicator={false}>
+            <Text style={[styles.sectionLabel, { color: theme.muted }]}>HOSTS</Text>
+            <View style={styles.hostList}>
+              {bootstrap.machines.map((machine) => {
+                const disabled = busy || !machine.reachable;
+                return (
+                  <View
+                    key={machine.id}
+                    style={[styles.hostRow, { backgroundColor: theme.canvas, borderColor: theme.line }]}
+                  >
+                    <View style={[styles.hostDot, { backgroundColor: machine.reachable ? "#67d391" : "#ef7770" }]} />
+                    <View style={styles.hostRowCopy}>
+                      <Text numberOfLines={1} style={[styles.hostRowTitle, { color: theme.text }]}>
+                        {machine.name}
+                      </Text>
+                      <Text numberOfLines={1} style={[styles.hostRowMeta, { color: theme.muted }]}>
+                        {machine.reachable ? machine.kind : (machine.reason ?? "Offline")}
+                      </Text>
+                    </View>
+                    <Pressable
+                      accessibilityLabel={`New workspace on ${machine.name}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled }}
+                      disabled={disabled}
+                      onPress={() => onCreateWorkspace(machine.id)}
+                      style={({ pressed }) => [
+                        styles.hostCreateButton,
+                        { backgroundColor: theme.accentDim, borderColor: theme.line },
+                        disabled && styles.disabled,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.hostCreateGlyph, { color: theme.accent }]}>＋</Text>
+                    </Pressable>
+                  </View>
+                );
+              })}
+            </View>
+            <Text style={[styles.sectionLabel, styles.workspaceSectionLabel, { color: theme.muted }]}>WORKSPACES</Text>
             {bootstrap.workspaces.map((workspace) => {
               const active = workspace.id === navigation.workspace.id;
               const tab =
@@ -367,197 +289,129 @@ function WorkspaceDrawer({
               const pane = tab?.panes.find((candidate) => candidate.id === tab.activePaneId) ?? tab?.panes[0];
               if (!tab || !pane) return null;
               const machine = bootstrap.machines.find((candidate) => candidate.id === workspace.machineId);
-              const paneCount = workspace.tabs.reduce((total, candidate) => total + candidate.panes.length, 0);
+              const machineLabel = machine?.name ?? workspace.machineId;
+              const descriptor =
+                workspace.descriptor?.trim().toLocaleLowerCase() === machineLabel.trim().toLocaleLowerCase()
+                  ? undefined
+                  : workspace.descriptor;
               return (
-                <Pressable
-                  accessibilityLabel={`${workspace.name} workspace`}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
+                <View
                   key={workspace.id}
-                  onPress={() =>
-                    onNavigate({
-                      pane,
-                      selection: {
-                        paneId: pane.id,
-                        tabId: tab.id,
-                        workspaceId: workspace.id,
-                      },
-                      tab,
-                      workspace,
-                    })
-                  }
-                  style={({ pressed }) => [
-                    styles.drawerRow,
+                  style={[
+                    styles.workspaceGroup,
                     { borderColor: active ? theme.accent : theme.line },
                     active && { backgroundColor: theme.accentDim },
-                    pressed && styles.pressed,
                   ]}
                 >
-                  <View style={[styles.drawerIcon, { backgroundColor: theme.accentDim }]}>
-                    <Text style={[styles.drawerGlyph, { color: theme.accent }]}>›_</Text>
-                  </View>
-                  <View style={styles.drawerRowCopy}>
-                    <Text numberOfLines={1} style={[styles.drawerRowTitle, { color: theme.text }]}>
-                      {workspace.name}
-                    </Text>
-                    <Text numberOfLines={1} style={[styles.drawerRowMeta, { color: theme.muted }]}>
-                      {workspace.tabs.length} tabs · {paneCount} panes · {machine?.name ?? workspace.machineId}
-                    </Text>
-                    {workspace.descriptor ? (
-                      <Text numberOfLines={1} style={[styles.drawerDescriptor, { color: theme.muted }]}>
-                        {workspace.descriptor}
+                  <Pressable
+                    accessibilityLabel={`${workspace.name} workspace`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    onPress={() =>
+                      onNavigate({
+                        pane,
+                        selection: {
+                          paneId: pane.id,
+                          tabId: tab.id,
+                          workspaceId: workspace.id,
+                        },
+                        tab,
+                        workspace,
+                      })
+                    }
+                    style={({ pressed }) => [styles.drawerRow, pressed && styles.pressed]}
+                  >
+                    <View style={[styles.drawerIcon, { backgroundColor: theme.accentDim }]}>
+                      <Text style={[styles.drawerGlyph, { color: theme.accent }]}>›_</Text>
+                    </View>
+                    <View style={styles.drawerRowCopy}>
+                      <Text numberOfLines={1} style={[styles.drawerRowTitle, { color: theme.text }]}>
+                        {workspace.name}
                       </Text>
-                    ) : null}
+                      <Text numberOfLines={1} style={[styles.drawerRowMeta, { color: theme.muted }]}>
+                        {machineLabel}
+                      </Text>
+                      {descriptor ? (
+                        <Text numberOfLines={1} style={[styles.drawerDescriptor, { color: theme.muted }]}>
+                          {descriptor}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                  <View style={[styles.paneList, { borderColor: theme.line }]}>
+                    {workspace.tabs.flatMap((workspaceTab) =>
+                      workspaceTab.panes.map((workspacePane) => {
+                        const paneActive = workspacePane.id === navigation.pane.id;
+                        const label =
+                          workspace.tabs.length > 1
+                            ? `${workspaceTab.title} / ${workspacePane.title}`
+                            : workspacePane.title;
+                        return (
+                          <Pressable
+                            accessibilityLabel={`${label} pane`}
+                            accessibilityRole="tab"
+                            accessibilityState={{ selected: paneActive }}
+                            key={`${workspaceTab.id}:${workspacePane.id}`}
+                            onPress={() =>
+                              onNavigate({
+                                pane: workspacePane,
+                                selection: {
+                                  paneId: workspacePane.id,
+                                  tabId: workspaceTab.id,
+                                  workspaceId: workspace.id,
+                                },
+                                tab: workspaceTab,
+                                workspace,
+                              })
+                            }
+                            style={({ pressed }) => [
+                              styles.drawerPaneRow,
+                              paneActive && { backgroundColor: theme.canvas },
+                              pressed && styles.pressed,
+                            ]}
+                          >
+                            <View
+                              style={[
+                                styles.paneStatus,
+                                {
+                                  backgroundColor:
+                                    workspacePane.status === "running"
+                                      ? "#67d391"
+                                      : workspacePane.status === "exited"
+                                        ? "#ef7770"
+                                        : theme.muted,
+                                },
+                              ]}
+                            />
+                            <Text
+                              numberOfLines={1}
+                              style={[styles.drawerPaneLabel, { color: paneActive ? theme.accent : theme.muted }]}
+                            >
+                              {label}
+                            </Text>
+                          </Pressable>
+                        );
+                      }),
+                    )}
                   </View>
-                </Pressable>
+                </View>
               );
             })}
           </ScrollView>
-        </View>
-      </SafeAreaView>
-    </Modal>
-  );
-}
-
-function WorkspaceActionSheet({
-  bootstrap,
-  busy,
-  isLandscape,
-  navigation,
-  onAction,
-  onClose,
-  onForget,
-  onOpenDiagnostics,
-  onRefresh,
-  onOpenSettings,
-  open,
-  theme,
-}: {
-  bootstrap: BootstrapPayload;
-  busy: boolean;
-  isLandscape: boolean;
-  navigation: ResolvedNavigation;
-  onAction: (action: WorkspaceAction) => void;
-  onClose: () => void;
-  onForget: () => void;
-  onOpenDiagnostics: () => void;
-  onRefresh: () => void;
-  onOpenSettings: () => void;
-  open: boolean;
-  theme: ChromeTheme;
-}) {
-  const [machineId, setMachineId] = useState(navigation.pane.machineId);
-  const activeMachineId = bootstrap.machines.some((machine) => machine.id === machineId)
-    ? machineId
-    : navigation.pane.machineId;
-
-  return (
-    <Modal
-      animationType="slide"
-      onRequestClose={onClose}
-      supportedOrientations={["portrait", "landscape-left", "landscape-right"]}
-      transparent
-      visible={open}
-    >
-      <SafeAreaView style={styles.modalRoot}>
-        <Pressable accessibilityLabel="Close workspace actions" onPress={onClose} style={styles.modalBackdrop} />
-        <View
-          style={[
-            styles.actionSheet,
-            isLandscape && styles.actionSheetLandscape,
-            { backgroundColor: theme.panel, borderColor: theme.line },
-          ]}
-        >
-          <View style={styles.sheetHandle} />
-          <View style={styles.sheetHeader}>
-            <View>
-              <Text style={[styles.sheetKicker, { color: theme.accent }]}>WORKSPACE ACTIONS</Text>
-              <Text style={[styles.sheetTitle, { color: theme.text }]}>{navigation.pane.title}</Text>
-            </View>
-            <SheetCloseButton onPress={onClose} theme={theme} />
-          </View>
-          <Text style={[styles.sectionLabel, { color: theme.muted }]}>TARGET HOST</Text>
-          <ScrollView
-            bounces={false}
-            contentContainerStyle={styles.hostPicker}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-          >
-            {bootstrap.machines.map((machine) => {
-              const selected = machine.id === activeMachineId;
-              return (
-                <Pressable
-                  accessibilityRole="radio"
-                  accessibilityState={{ checked: selected, disabled: !machine.reachable }}
-                  disabled={!machine.reachable}
-                  key={machine.id}
-                  onPress={() => setMachineId(machine.id)}
-                  style={({ pressed }) => [
-                    styles.hostPill,
-                    { borderColor: selected ? theme.accent : theme.line },
-                    selected && { backgroundColor: theme.accentDim },
-                    !machine.reachable && styles.disabled,
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <View style={[styles.hostDot, { backgroundColor: machine.reachable ? "#67d391" : "#ef7770" }]} />
-                  <Text style={[styles.hostLabel, { color: selected ? theme.text : theme.muted }]}>{machine.name}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-          <View style={styles.actionGrid}>
-            <ActionButton
-              disabled={busy}
-              label="New workspace"
-              onPress={() => onAction({ type: "create-workspace", machineId: activeMachineId })}
-              theme={theme}
-            />
-            <ActionButton
-              disabled={busy}
-              label="New tab"
-              onPress={() => onAction({ type: "create-tab", machineId: activeMachineId })}
-              theme={theme}
-            />
-            <ActionButton
-              disabled={busy}
-              label="Split right"
-              onPress={() => onAction({ type: "split", direction: "horizontal", machineId: activeMachineId })}
-              theme={theme}
-            />
-            <ActionButton
-              disabled={busy}
-              label="Split below"
-              onPress={() => onAction({ type: "split", direction: "vertical", machineId: activeMachineId })}
-              theme={theme}
-            />
-            <ActionButton label="Settings" onPress={onOpenSettings} theme={theme} />
-            <ActionButton label="Diagnostics" onPress={onOpenDiagnostics} theme={theme} />
-            <ActionButton label="Refresh" onPress={onRefresh} theme={theme} />
-            <ActionButton label="Change server" onPress={onForget} theme={theme} />
-          </View>
-          <View style={[styles.dangerZone, { borderColor: theme.line }]}>
-            <ActionButton
-              danger
-              disabled={busy}
-              label="Close pane"
-              onPress={() => onAction({ type: "close-pane" })}
-              theme={theme}
-            />
-            <ActionButton
-              danger
-              disabled={busy}
-              label="Close tab"
-              onPress={() => onAction({ type: "close-tab" })}
-              theme={theme}
-            />
-            <ActionButton
-              danger
-              disabled={busy}
-              label="Close workspace"
-              onPress={() => onAction({ type: "close-workspace" })}
-              theme={theme}
-            />
+          <View style={[styles.drawerFooter, { borderColor: theme.line }]}>
+            <Pressable
+              accessibilityLabel="Open settings"
+              accessibilityRole="button"
+              onPress={onOpenSettings}
+              style={({ pressed }) => [
+                styles.settingsNavButton,
+                { backgroundColor: theme.canvas, borderColor: theme.line },
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.settingsNavGlyph, { color: theme.accent }]}>⚙</Text>
+              <Text style={[styles.settingsNavLabel, { color: theme.text }]}>Settings</Text>
+            </Pressable>
           </View>
         </View>
       </SafeAreaView>
@@ -568,12 +422,18 @@ function WorkspaceActionSheet({
 function WorkspaceSettingsSheet({
   onApply,
   onClose,
+  onForget,
+  onOpenDiagnostics,
+  onRefresh,
   open,
   settings,
   theme,
 }: {
   onApply: (settings: WmuxSettings) => void;
   onClose: () => void;
+  onForget: () => void;
+  onOpenDiagnostics: () => void;
+  onRefresh: () => void;
   open: boolean;
   settings: WmuxSettings;
   theme: ChromeTheme;
@@ -680,6 +540,12 @@ function WorkspaceSettingsSheet({
                 onPress={() => setDraft((current) => ({ ...current, terminalScrollMode: "immediate" }))}
                 theme={draftTheme}
               />
+            </View>
+            <Text style={[styles.sectionLabel, { color: draftTheme.muted }]}>CONNECTION</Text>
+            <View style={styles.connectionActions}>
+              <ActionButton label="Reconnect" onPress={onRefresh} theme={draftTheme} />
+              <ActionButton label="Diagnostics" onPress={onOpenDiagnostics} theme={draftTheme} />
+              <ActionButton danger label="Change server" onPress={onForget} theme={draftTheme} />
             </View>
             <View style={styles.settingsActions}>
               <ActionButton label="Cancel" onPress={close} theme={draftTheme} />
@@ -847,18 +713,22 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "800",
   },
+  closeWorkspaceButton: {
+    backgroundColor: "#30191a",
+    borderColor: "#633032",
+  },
+  closeWorkspaceGlyph: {
+    color: "#ff8d87",
+    fontSize: 22,
+    lineHeight: 23,
+  },
   workspaceHeaderCopy: {
     flex: 1,
     minWidth: 54,
   },
   workspaceName: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "800",
-  },
-  workspaceContext: {
-    fontFamily: fonts.mono,
-    fontSize: 9,
-    marginTop: 1,
   },
   surfaceSwitcher: {
     borderRadius: 9,
@@ -879,73 +749,10 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "800",
   },
-  tabBar: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    minHeight: 38,
-  },
-  tabBarContent: {
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-  },
-  tabPill: {
-    alignItems: "center",
-    borderRadius: 7,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 5,
-    maxWidth: 160,
-    minHeight: 29,
-    paddingHorizontal: 9,
-  },
-  tabLabel: {
-    fontFamily: fonts.mono,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  tabCount: {
-    fontFamily: fonts.mono,
-    fontSize: 9,
-    fontWeight: "800",
-  },
-  paneBar: {
-    alignItems: "center",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    flexDirection: "row",
-    minHeight: 35,
-    paddingLeft: 7,
-  },
-  paneBarLabel: {
-    fontFamily: fonts.mono,
-    fontSize: 9,
-    fontWeight: "800",
-    letterSpacing: 1,
-    marginRight: 8,
-  },
-  paneBarContent: {
-    alignItems: "center",
-    gap: 6,
-    paddingRight: 8,
-  },
-  panePill: {
-    alignItems: "center",
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 6,
-    minHeight: 27,
-    paddingHorizontal: 8,
-  },
   paneStatus: {
     borderRadius: 4,
     height: 7,
     width: 7,
-  },
-  paneLabel: {
-    fontFamily: fonts.mono,
-    fontSize: 10,
-    fontWeight: "700",
   },
   modalRoot: {
     flex: 1,
@@ -964,22 +771,68 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     maxWidth: 390,
-    padding: 16,
+    paddingHorizontal: 16,
     position: "absolute",
     top: 0,
     width: "88%",
   },
   drawerList: {
     gap: 8,
-    paddingBottom: 24,
+    paddingBottom: 16,
+    paddingTop: 12,
+  },
+  hostList: {
+    gap: 7,
+  },
+  hostRow: {
+    alignItems: "center",
+    borderRadius: 11,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 58,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  hostRowCopy: {
+    flex: 1,
+  },
+  hostRowTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  hostRowMeta: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    marginTop: 3,
+    textTransform: "uppercase",
+  },
+  hostCreateButton: {
+    alignItems: "center",
+    borderRadius: 9,
+    borderWidth: 1,
+    height: 38,
+    justifyContent: "center",
+    width: 42,
+  },
+  hostCreateGlyph: {
+    fontFamily: fonts.mono,
+    fontSize: 19,
+    fontWeight: "800",
+  },
+  workspaceSectionLabel: {
+    marginTop: 8,
+  },
+  workspaceGroup: {
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: "hidden",
   },
   drawerRow: {
     alignItems: "center",
-    borderRadius: 12,
-    borderWidth: 1,
     flexDirection: "row",
     gap: 11,
-    minHeight: 74,
+    minHeight: 68,
     padding: 11,
   },
   drawerIcon: {
@@ -1010,17 +863,44 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 3,
   },
-  actionSheet: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderTopWidth: 1,
-    gap: 11,
-    maxHeight: "86%",
-    padding: 16,
+  paneList: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    padding: 5,
   },
-  actionSheetLandscape: {
-    maxHeight: "96%",
-    paddingVertical: 10,
+  drawerPaneRow: {
+    alignItems: "center",
+    borderRadius: 8,
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 34,
+    paddingHorizontal: 11,
+  },
+  drawerPaneLabel: {
+    flex: 1,
+    fontFamily: fonts.mono,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  drawerFooter: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 12,
+  },
+  settingsNavButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    borderRadius: 9,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 9,
+    minHeight: 42,
+    paddingHorizontal: 13,
+  },
+  settingsNavGlyph: {
+    fontSize: 16,
+  },
+  settingsNavLabel: {
+    fontSize: 12,
+    fontWeight: "800",
   },
   settingsSheet: {
     borderTopLeftRadius: 20,
@@ -1076,38 +956,15 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 1.1,
   },
-  hostPicker: {
-    gap: 7,
-  },
-  hostPill: {
-    alignItems: "center",
-    borderRadius: 9,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 7,
-    minHeight: 34,
-    paddingHorizontal: 10,
-  },
   hostDot: {
     borderRadius: 4,
     height: 8,
     width: 8,
   },
-  hostLabel: {
-    fontFamily: fonts.mono,
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  actionGrid: {
+  connectionActions: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-  },
-  dangerZone: {
-    borderTopWidth: 1,
-    flexDirection: "row",
-    gap: 8,
-    paddingTop: 11,
   },
   actionButton: {
     alignItems: "center",

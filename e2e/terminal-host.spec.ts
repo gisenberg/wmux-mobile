@@ -54,7 +54,7 @@ test("loads bundled terminal fonts before accepting sessions", async ({ page }) 
   await page.addInitScript(() => {
     const target = window as typeof window & {
       __releaseTerminalFonts?: () => void;
-      __terminalFontLoadCalls?: number;
+      __terminalFontLoadRequests?: { family: string; weight: string }[];
       __wmuxNativeMessages: ToNative[];
       ReactNativeWebView: { postMessage: (message: string) => void };
     };
@@ -65,16 +65,16 @@ test("loads bundled terminal fonts before accepting sessions", async ({ page }) 
       },
     };
 
-    const originalLoad = document.fonts.load.bind(document.fonts);
+    const originalLoad = FontFace.prototype.load;
     const gate = new Promise<void>((resolve) => {
       target.__releaseTerminalFonts = resolve;
     });
-    target.__terminalFontLoadCalls = 0;
-    Object.defineProperty(document.fonts, "load", {
+    target.__terminalFontLoadRequests = [];
+    Object.defineProperty(FontFace.prototype, "load", {
       configurable: true,
-      value: (...args: Parameters<FontFaceSet["load"]>) => {
-        target.__terminalFontLoadCalls = (target.__terminalFontLoadCalls ?? 0) + 1;
-        return gate.then(() => originalLoad(...args));
+      value: function (this: FontFace) {
+        target.__terminalFontLoadRequests?.push({ family: this.family, weight: this.weight });
+        return gate.then(() => originalLoad.call(this));
       },
     });
   });
@@ -83,8 +83,10 @@ test("loads bundled terminal fonts before accepting sessions", async ({ page }) 
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const target = window as typeof window & { __terminalFontLoadCalls?: number };
-        return target.__terminalFontLoadCalls ?? 0;
+        const target = window as typeof window & {
+          __terminalFontLoadRequests?: { family: string; weight: string }[];
+        };
+        return target.__terminalFontLoadRequests?.length ?? 0;
       }),
     )
     .toBe(2);
@@ -94,7 +96,26 @@ test("loads bundled terminal fonts before accepting sessions", async ({ page }) 
     target.__releaseTerminalFonts?.();
   });
   await expect.poll(async () => (await nativeMessages(page)).some((message) => message.t === "ready")).toBe(true);
-  expect(await page.evaluate(() => document.fonts.check('400 14px "Fira Code"'))).toBe(true);
+  expect(
+    await page.evaluate(() => {
+      const target = window as typeof window & {
+        __terminalFontLoadRequests?: { family: string; weight: string }[];
+      };
+      return target.__terminalFontLoadRequests;
+    }),
+  ).toEqual([
+    { family: '"Fira Code"', weight: "400" },
+    { family: '"Fira Code"', weight: "600" },
+  ]);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  expect(
+    await page.evaluate(() =>
+      [...document.fonts]
+        .filter((face) => face.family.includes("Fira Code") && face.status === "loaded")
+        .map((face) => face.weight)
+        .sort(),
+    ),
+  ).toEqual(["400", "600"]);
 });
 
 test("owns pane sockets and preserves raw and checkpoint replay ordering", async ({ page }) => {
@@ -224,6 +245,116 @@ test("repaints a reattach replay without waiting for terminal input", async ({ p
     )
     .toBeGreaterThan(0);
   expect(inputPayloads(await harness.socket(paneId))).toEqual([]);
+});
+
+test("preserves the painted frame until a durable reattach refresh settles", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-durable-reattach";
+  const terminal = page.locator(`.terminal-session[data-pane-id="${paneId}"]`);
+  await initializePane(harness, paneId, 640, 360);
+  await harness.send(paneId, ready(paneId, "raw", "\x1b[2J\x1b[Hbefore durable refresh\r\n"));
+  await expect
+    .poll(async () =>
+      (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join("\n"),
+    )
+    .toContain("before durable refresh");
+  const before = await terminal.screenshot();
+
+  await harness.send(paneId, {
+    ...ready(paneId, "raw", ""),
+    waitForRefresh: true,
+  });
+  await page.waitForTimeout(150);
+  expect((await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join("\n")).toContain(
+    "before durable refresh",
+  );
+  expect(Buffer.compare(await terminal.screenshot(), before)).toBe(0);
+
+  await harness.send(paneId, {
+    type: "output",
+    paneId,
+    data: "\x1b[?2026h\x1b[2J\x1b[Hpainted by durable",
+  });
+  await page.waitForTimeout(30);
+  await harness.send(paneId, {
+    type: "output",
+    paneId,
+    data: " refresh\r\n\x1b[?2026l",
+  });
+
+  await expect
+    .poll(async () =>
+      (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join("\n"),
+    )
+    .toContain("painted by durable refresh");
+  await expect.poll(async () => Buffer.compare(await terminal.screenshot(), before)).not.toBe(0);
+  expect(inputPayloads(await harness.socket(paneId))).toEqual([]);
+});
+
+test("requests a conventional redraw when a durable refresh has no visible text", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-empty-durable-refresh";
+  await initializePane(harness, paneId, 640, 360);
+  const socket = await harness.socket(paneId);
+
+  await harness.send(paneId, {
+    ...ready(paneId, "raw", ""),
+    waitForRefresh: true,
+  });
+  await harness.send(paneId, {
+    type: "output",
+    paneId,
+    data: "\x1b[2J\x1b[5;8H",
+  });
+
+  await expect
+    .poll(() =>
+      socket.received.find(
+        (message): message is Extract<PaneClientMessage, { type: "input" }> =>
+          message.type === "input" && message.data === "\x0c",
+      ),
+    )
+    .toMatchObject({ type: "input", data: "\x0c", terminalResponse: false });
+
+  await harness.send(paneId, {
+    type: "output",
+    paneId,
+    data: "\r\x1b[2Kwmux@wmux:~ $ ",
+  });
+  await expect
+    .poll(async () =>
+      (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join("\n"),
+    )
+    .toContain("wmux@wmux:~ $");
+});
+
+test("requests a conventional redraw when an initial replay remains blank", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-empty-initial-replay";
+  await initializePane(harness, paneId, 640, 360);
+  const socket = await harness.socket(paneId);
+
+  await harness.send(paneId, ready(paneId, "raw", "\x1b[2J\x1b[5;8H"));
+
+  await expect
+    .poll(() =>
+      socket.received.find(
+        (message): message is Extract<PaneClientMessage, { type: "input" }> =>
+          message.type === "input" && message.data === "\x0c",
+      ),
+    )
+    .toMatchObject({ type: "input", data: "\x0c", terminalResponse: false });
+
+  await harness.send(paneId, {
+    type: "output",
+    paneId,
+    data: "\r\x1b[2Kwmux@wmux:~ $ ",
+  });
+  await expect
+    .poll(async () =>
+      (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join("\n"),
+    )
+    .toContain("wmux@wmux:~ $");
 });
 
 test("emits low-frequency control signals without bridging terminal output", async ({ page }) => {

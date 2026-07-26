@@ -1,5 +1,17 @@
-import "@fontsource/fira-code/400.css";
-import "@fontsource/fira-code/600.css";
+import "@fontsource/fira-code/cyrillic-ext-400.css";
+import "@fontsource/fira-code/cyrillic-ext-600.css";
+import "@fontsource/fira-code/cyrillic-400.css";
+import "@fontsource/fira-code/cyrillic-600.css";
+import "@fontsource/fira-code/greek-ext-400.css";
+import "@fontsource/fira-code/greek-ext-600.css";
+import "@fontsource/fira-code/greek-400.css";
+import "@fontsource/fira-code/greek-600.css";
+import "@fontsource/fira-code/latin-ext-400.css";
+import "@fontsource/fira-code/latin-ext-600.css";
+import "@fontsource/fira-code/symbols2-400.css";
+import "@fontsource/fira-code/symbols2-600.css";
+import firaCode400Url from "@fontsource/fira-code/files/fira-code-latin-400-normal.woff2?url";
+import firaCode600Url from "@fontsource/fira-code/files/fira-code-latin-600-normal.woff2?url";
 import { Ghostty } from "ghostty-web";
 import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url";
 
@@ -23,6 +35,10 @@ const root = document.querySelector<HTMLElement>("#terminal-pool");
 if (!root) throw new Error("Terminal host root is missing");
 
 let pool: TerminalPool | undefined;
+const terminalFontFaces = [
+  new FontFace("Fira Code", `url(${firaCode400Url}) format("woff2")`, { style: "normal", weight: "400" }),
+  new FontFace("Fira Code", `url(${firaCode600Url}) format("woff2")`, { style: "normal", weight: "600" }),
+];
 
 const emit = (message: ToNative): void => {
   const safeMessage = message.t === "log" ? { ...message, message: redactSensitive(message.message) } : message;
@@ -80,7 +96,8 @@ const start = async (): Promise<void> => {
 };
 
 const loadTerminalFonts = async (): Promise<void> => {
-  await Promise.all([document.fonts.load('400 14px "Fira Code"'), document.fonts.load('600 14px "Fira Code"')]);
+  for (const face of terminalFontFaces) document.fonts.add(face);
+  await Promise.all(terminalFontFaces.map((face) => face.load()));
   await document.fonts.ready;
 };
 
