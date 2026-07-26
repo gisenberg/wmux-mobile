@@ -18,6 +18,9 @@ jobs:
     container:
       image: mcr.microsoft.com/playwright:v1.61.1-noble
       options: --user 1000:1000
+    env:
+      EXPO_NO_TELEMETRY: "1"
+      NPM_CONFIG_CACHE: /tmp/npm-cache
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
