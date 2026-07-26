@@ -4,6 +4,8 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
+import { selectBuildNumber } from "./testflight-build-number.mjs";
+
 const expectedBundleIdentifier = "com.gisenberg.wmuxmobile";
 const appStoreConnectBaseUrl = "https://api.appstoreconnect.apple.com";
 
@@ -71,17 +73,6 @@ async function appStoreConnectRequest(path, token) {
   return response.json();
 }
 
-function incrementBuildNumber(version) {
-  if (!version) return "1";
-  const components = version.split(".");
-  if (!components.length || components.length > 3 || components.some((component) => !/^\d+$/.test(component))) {
-    throw new Error(`Cannot increment existing App Store build number: ${version}`);
-  }
-  const lastIndex = components.length - 1;
-  components[lastIndex] = String(Number.parseInt(components[lastIndex], 10) + 1);
-  return components.join(".");
-}
-
 async function writeGitHubVariable(file, name, value) {
   if (!file) return;
   await appendFile(file, `${name}=${value}\n`, "utf8");
@@ -114,7 +105,7 @@ buildsUrl.searchParams.set("limit", "1");
 buildsUrl.searchParams.set("sort", "-uploadedDate");
 const buildsResponse = await appStoreConnectRequest(`${buildsUrl.pathname}${buildsUrl.search}`, token);
 const latestBuildNumber = buildsResponse.data?.[0]?.attributes?.version;
-const nextBuildNumber = incrementBuildNumber(latestBuildNumber);
+const nextBuildNumber = selectBuildNumber(latestBuildNumber, process.env.GITHUB_RUN_NUMBER?.trim());
 
 const appConfig = JSON.parse(await readFile(new URL("../../app.json", import.meta.url), "utf8"));
 const marketingVersion = appConfig.expo?.version;
