@@ -70,13 +70,18 @@ window.addEventListener("unhandledrejection", (event) => {
 window.addEventListener("pagehide", () => pool?.dispose(), { once: true });
 
 const start = async (): Promise<void> => {
-  const ghostty = await Ghostty.load(ghosttyWasmUrl);
+  const [ghostty] = await Promise.all([Ghostty.load(ghosttyWasmUrl), loadTerminalFonts()]);
   pool = new TerminalPool({ ghostty, parent: root, emit });
   window.__wmuxHost = {
     dispatch,
     ...(import.meta.env.DEV ? { snapshot: () => pool?.snapshot() ?? { sessions: [] } } : {}),
   };
   emit({ t: "ready" });
+};
+
+const loadTerminalFonts = async (): Promise<void> => {
+  await Promise.all([document.fonts.load('400 14px "Fira Code"'), document.fonts.load('600 14px "Fira Code"')]);
+  await document.fonts.ready;
 };
 
 void start().catch((error: unknown) => {

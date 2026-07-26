@@ -50,6 +50,53 @@ test.afterAll(async () => {
   await viteServer.close();
 });
 
+test("loads bundled terminal fonts before accepting sessions", async ({ page }) => {
+  await page.addInitScript(() => {
+    const target = window as typeof window & {
+      __releaseTerminalFonts?: () => void;
+      __terminalFontLoadCalls?: number;
+      __wmuxNativeMessages: ToNative[];
+      ReactNativeWebView: { postMessage: (message: string) => void };
+    };
+    target.__wmuxNativeMessages = [];
+    target.ReactNativeWebView = {
+      postMessage(message) {
+        target.__wmuxNativeMessages.push(JSON.parse(message) as ToNative);
+      },
+    };
+
+    const originalLoad = document.fonts.load.bind(document.fonts);
+    const gate = new Promise<void>((resolve) => {
+      target.__releaseTerminalFonts = resolve;
+    });
+    target.__terminalFontLoadCalls = 0;
+    Object.defineProperty(document.fonts, "load", {
+      configurable: true,
+      value: (...args: Parameters<FontFaceSet["load"]>) => {
+        target.__terminalFontLoadCalls = (target.__terminalFontLoadCalls ?? 0) + 1;
+        return gate.then(() => originalLoad(...args));
+      },
+    });
+  });
+
+  await page.goto(hostUrl);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const target = window as typeof window & { __terminalFontLoadCalls?: number };
+        return target.__terminalFontLoadCalls ?? 0;
+      }),
+    )
+    .toBe(2);
+  expect((await nativeMessages(page)).some((message) => message.t === "ready")).toBe(false);
+  await page.evaluate(() => {
+    const target = window as typeof window & { __releaseTerminalFonts?: () => void };
+    target.__releaseTerminalFonts?.();
+  });
+  await expect.poll(async () => (await nativeMessages(page)).some((message) => message.t === "ready")).toBe(true);
+  expect(await page.evaluate(() => document.fonts.check('400 14px "Fira Code"'))).toBe(true);
+});
+
 test("owns pane sockets and preserves raw and checkpoint replay ordering", async ({ page }) => {
   const harness = await openHarness(page);
   await initializePane(harness, "pane-raw", 640, 360);
