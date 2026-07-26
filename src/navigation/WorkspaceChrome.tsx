@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -21,6 +21,8 @@ export type WorkspaceAction =
   | { type: "close-tab" }
   | { type: "close-workspace" };
 
+export type WorkspaceSurface = "chat" | "terminal";
+
 interface WorkspaceChromeProps {
   bootstrap: BootstrapPayload;
   children: ReactNode;
@@ -29,9 +31,13 @@ interface WorkspaceChromeProps {
   mutationBusy?: boolean;
   navigation: ResolvedNavigation;
   onAction: (action: WorkspaceAction) => void;
+  onForget: () => void;
   onNavigate: (navigation: ResolvedNavigation) => void;
   onOpenDiagnostics: () => void;
+  onRefresh: () => void;
+  onSurfaceChange: (surface: WorkspaceSurface) => void;
   onUpdateSettings: (settings: WmuxSettings) => void;
+  surface: WorkspaceSurface;
 }
 
 export function WorkspaceChrome({
@@ -42,21 +48,24 @@ export function WorkspaceChrome({
   mutationBusy = false,
   navigation,
   onAction,
+  onForget,
   onNavigate,
   onOpenDiagnostics,
+  onRefresh,
+  onSurfaceChange,
   onUpdateSettings,
+  surface,
 }: WorkspaceChromeProps) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const theme = chromeTheme(bootstrap.settings.colorScheme);
-  const machine =
-    bootstrap.machines.find((candidate) => candidate.id === navigation.pane.machineId) ??
-    bootstrap.machines.find((candidate) => candidate.id === navigation.workspace.machineId);
-
   const edgeSwipeResponder = useMemo(
     () =>
       PanResponder.create({
+        onPanResponderMove: (_event, gesture) => {
+          if (gesture.dx >= 64) setDrawerOpen(true);
+        },
         onPanResponderTerminationRequest: () => false,
         onPanResponderRelease: (_event, gesture) => {
           if (gesture.dx >= 64) setDrawerOpen(true);
@@ -71,6 +80,7 @@ export function WorkspaceChrome({
     <View style={styles.root}>
       <View
         accessibilityLabel="Open workspace drawer with edge swipe"
+        collapsable={false}
         style={styles.edgeSwipeZone}
         {...edgeSwipeResponder.panHandlers}
       />
@@ -92,9 +102,22 @@ export function WorkspaceChrome({
             {navigation.workspace.name}
           </Text>
           <Text numberOfLines={1} style={[styles.workspaceContext, { color: theme.muted }]}>
-            {machine?.name ?? navigation.workspace.machineId}
-            {navigation.workspace.descriptor ? ` · ${navigation.workspace.descriptor}` : ""}
+            {navigation.tab.title}
           </Text>
+        </View>
+        <View style={[styles.surfaceSwitcher, { backgroundColor: theme.canvas, borderColor: theme.line }]}>
+          <SurfaceButton
+            active={surface === "terminal"}
+            label="Terminal"
+            onPress={() => onSurfaceChange("terminal")}
+            theme={theme}
+          />
+          <SurfaceButton
+            active={surface === "chat"}
+            label="Chat"
+            onPress={() => onSurfaceChange("chat")}
+            theme={theme}
+          />
         </View>
         <Pressable
           accessibilityLabel="Open workspace actions"
@@ -236,6 +259,14 @@ export function WorkspaceChrome({
           setActionsOpen(false);
           onOpenDiagnostics();
         }}
+        onForget={() => {
+          setActionsOpen(false);
+          onForget();
+        }}
+        onRefresh={() => {
+          setActionsOpen(false);
+          onRefresh();
+        }}
         onOpenSettings={() => {
           setActionsOpen(false);
           setSettingsOpen(true);
@@ -254,6 +285,33 @@ export function WorkspaceChrome({
         theme={theme}
       />
     </View>
+  );
+}
+
+function SurfaceButton({
+  active,
+  label,
+  onPress,
+  theme,
+}: {
+  active: boolean;
+  label: string;
+  onPress: () => void;
+  theme: ChromeTheme;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.surfaceButton,
+        active && { backgroundColor: theme.accentDim },
+        pressed && styles.pressed,
+      ]}
+    >
+      <Text style={[styles.surfaceButtonText, { color: active ? theme.accent : theme.muted }]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -368,7 +426,9 @@ function WorkspaceActionSheet({
   navigation,
   onAction,
   onClose,
+  onForget,
   onOpenDiagnostics,
+  onRefresh,
   onOpenSettings,
   open,
   theme,
@@ -379,7 +439,9 @@ function WorkspaceActionSheet({
   navigation: ResolvedNavigation;
   onAction: (action: WorkspaceAction) => void;
   onClose: () => void;
+  onForget: () => void;
   onOpenDiagnostics: () => void;
+  onRefresh: () => void;
   onOpenSettings: () => void;
   open: boolean;
   theme: ChromeTheme;
@@ -471,6 +533,8 @@ function WorkspaceActionSheet({
             />
             <ActionButton label="Settings" onPress={onOpenSettings} theme={theme} />
             <ActionButton label="Diagnostics" onPress={onOpenDiagnostics} theme={theme} />
+            <ActionButton label="Refresh" onPress={onRefresh} theme={theme} />
+            <ActionButton label="Change server" onPress={onForget} theme={theme} />
           </View>
           <View style={[styles.dangerZone, { borderColor: theme.line }]}>
             <ActionButton
@@ -747,34 +811,36 @@ function SheetCloseButton({ onPress, theme }: { onPress: () => void; theme: Chro
 
 const styles = StyleSheet.create({
   root: {
-    gap: 12,
+    flex: 1,
+    minHeight: 0,
     position: "relative",
     width: "100%",
   },
   edgeSwipeZone: {
     bottom: 0,
-    left: 0,
+    left: Platform.OS === "android" ? 24 : 0,
     position: "absolute",
     top: 0,
-    width: 28,
+    width: Platform.OS === "android" ? 36 : 28,
     zIndex: 3,
   },
   workspaceHeader: {
     alignItems: "center",
-    borderRadius: 13,
-    borderWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",
-    gap: 11,
-    minHeight: 58,
-    paddingHorizontal: 10,
+    gap: 7,
+    minHeight: 48,
+    paddingHorizontal: 7,
+    paddingVertical: 5,
+    zIndex: 4,
   },
   squareButton: {
     alignItems: "center",
-    borderRadius: 9,
+    borderRadius: 8,
     borderWidth: 1,
-    height: 38,
+    height: 36,
     justifyContent: "center",
-    width: 42,
+    width: 38,
   },
   squareButtonText: {
     fontFamily: fonts.mono,
@@ -783,36 +849,55 @@ const styles = StyleSheet.create({
   },
   workspaceHeaderCopy: {
     flex: 1,
+    minWidth: 54,
   },
   workspaceName: {
-    fontSize: 15,
+    fontSize: 12,
     fontWeight: "800",
   },
   workspaceContext: {
     fontFamily: fonts.mono,
-    fontSize: 10,
-    marginTop: 3,
+    fontSize: 9,
+    marginTop: 1,
+  },
+  surfaceSwitcher: {
+    borderRadius: 9,
+    borderWidth: 1,
+    flexDirection: "row",
+    padding: 2,
+  },
+  surfaceButton: {
+    alignItems: "center",
+    borderRadius: 7,
+    height: 30,
+    justifyContent: "center",
+    minWidth: 55,
+    paddingHorizontal: 7,
+  },
+  surfaceButtonText: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    fontWeight: "800",
   },
   tabBar: {
-    borderRadius: 12,
-    borderWidth: 1,
-    minHeight: 46,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    minHeight: 38,
   },
   tabBarContent: {
     alignItems: "center",
-    gap: 7,
-    paddingHorizontal: 7,
-    paddingVertical: 6,
+    gap: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
   },
   tabPill: {
     alignItems: "center",
-    borderRadius: 8,
+    borderRadius: 7,
     borderWidth: 1,
     flexDirection: "row",
-    gap: 7,
-    maxWidth: 180,
-    minHeight: 32,
-    paddingHorizontal: 11,
+    gap: 5,
+    maxWidth: 160,
+    minHeight: 29,
+    paddingHorizontal: 9,
   },
   tabLabel: {
     fontFamily: fonts.mono,
@@ -826,11 +911,10 @@ const styles = StyleSheet.create({
   },
   paneBar: {
     alignItems: "center",
-    borderRadius: 10,
-    borderWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",
-    minHeight: 42,
-    paddingLeft: 10,
+    minHeight: 35,
+    paddingLeft: 7,
   },
   paneBarLabel: {
     fontFamily: fonts.mono,
@@ -850,8 +934,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: "row",
     gap: 6,
-    minHeight: 30,
-    paddingHorizontal: 9,
+    minHeight: 27,
+    paddingHorizontal: 8,
   },
   paneStatus: {
     borderRadius: 4,

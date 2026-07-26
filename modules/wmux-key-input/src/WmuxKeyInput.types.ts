@@ -15,6 +15,10 @@ export interface WmuxKeyInputTextEvent {
   data: string;
 }
 
+export interface WmuxKeyInputPasteEvent {
+  text: string;
+}
+
 export interface WmuxKeyInputFocusEvent {
   focused: boolean;
 }
@@ -39,6 +43,7 @@ export interface WmuxKeyInputViewProps {
   onFocusChange?: (event: NativeSyntheticEvent<WmuxKeyInputFocusEvent>) => void;
   onKey?: (event: NativeSyntheticEvent<WmuxKeyInputKeyEvent>) => void;
   onModifierState?: (event: NativeSyntheticEvent<WmuxKeyInputModifierEvent>) => void;
+  onPaste?: (event: NativeSyntheticEvent<WmuxKeyInputPasteEvent>) => void;
   onText?: (event: NativeSyntheticEvent<WmuxKeyInputTextEvent>) => void;
   style?: StyleProp<ViewStyle>;
 }

@@ -15,6 +15,7 @@ private struct KeyDescriptor {
 private final class TerminalTextView: UITextView {
   var terminalAccessoryView: UIView?
   var onHardwareKey: ((UIKey) -> Bool)?
+  var onEmptyDeleteBackward: (() -> Void)?
 
   override var inputAccessoryView: UIView? {
     get {
@@ -35,6 +36,14 @@ private final class TerminalTextView: UITextView {
     }
     if !unhandled.isEmpty {
       super.pressesBegan(unhandled, with: event)
+    }
+  }
+
+  override func deleteBackward() {
+    let shouldEmitBackspace = markedTextRange == nil && text.isEmpty
+    super.deleteBackward()
+    if shouldEmitBackspace {
+      onEmptyDeleteBackward?()
     }
   }
 }
@@ -111,6 +120,7 @@ private final class RepeatingButton: UIButton {
 final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
   let onKey = EventDispatcher()
   let onText = EventDispatcher()
+  let onPaste = EventDispatcher()
   let onFocusChange = EventDispatcher()
   let onModifierState = EventDispatcher()
 
@@ -150,6 +160,9 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
     textView.terminalAccessoryView = buildAccessoryView()
     textView.onHardwareKey = { [weak self] key in
       self?.handleHardwareKey(key) ?? false
+    }
+    textView.onEmptyDeleteBackward = { [weak self] in
+      self?.sendInputBackspace()
     }
     addSubview(textView)
   }
@@ -257,6 +270,20 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
     isResettingText = false
   }
 
+  private func sendInputBackspace() {
+    sendKey(
+      key: "Backspace",
+      code: "Backspace",
+      ctrl: ctrlState != .off,
+      alt: altState != .off,
+      shift: false,
+      meta: false,
+      repeatKey: false,
+      source: "ime"
+    )
+    consumeArmedModifiers()
+  }
+
   private func handleHardwareKey(_ hardwareKey: UIKey) -> Bool {
     let flags = hardwareKey.modifierFlags
     let ctrl = flags.contains(.control)
@@ -333,6 +360,11 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
     stack.addArrangedSubview(makeKeyButton(title: "Tab") { [weak self] _ in
       self?.sendAccessoryKey(key: "Tab", code: "Tab")
     })
+    let pasteButton = makeKeyButton(title: "Paste") { [weak self] _ in
+      self?.onPaste(["text": UIPasteboard.general.string ?? ""])
+    }
+    pasteButton.accessibilityLabel = "Paste into terminal"
+    stack.addArrangedSubview(pasteButton)
 
     let ctrl = makeModifierButton(title: "Ctrl", action: #selector(toggleCtrl))
     ctrlButton = ctrl

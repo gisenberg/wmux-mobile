@@ -3,6 +3,7 @@ export type {
   WmuxKeyInputFocusEvent,
   WmuxKeyInputKeyEvent,
   WmuxKeyInputModifierEvent,
+  WmuxKeyInputPasteEvent,
   WmuxKeyInputRef,
   WmuxKeyInputTextEvent,
   WmuxKeyInputViewProps,

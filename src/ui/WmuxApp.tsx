@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
-import type { BootstrapPayload, MachineStatus, WmuxSettings } from "../../protocol/wmux";
+import type { BootstrapPayload, WmuxSettings } from "../../protocol/wmux";
 import type {
   WmuxKeyInputKeyEvent,
   WmuxKeyInputModifierEvent,
@@ -25,6 +25,7 @@ import type {
 } from "../../modules/wmux-key-input";
 
 import { WmuxApiClient } from "@/api/client";
+import { ChatSurface } from "@/chat/ChatSurface";
 import {
   readNativeClipboardImage,
   readNativeClipboardText,
@@ -34,7 +35,7 @@ import { TerminalInput, type TerminalInputHandle } from "@/input/TerminalInput";
 import { chromeTheme, normalizeTerminalColorScheme, type ChromeTheme } from "@/navigation/chrome-theme";
 import { navigationFixture } from "@/navigation/fixture";
 import { cycleTab, resolveNavigation, type NavigationSelection, type ResolvedNavigation } from "@/navigation/model";
-import { WorkspaceChrome, type WorkspaceAction } from "@/navigation/WorkspaceChrome";
+import { WorkspaceChrome, type WorkspaceAction, type WorkspaceSurface } from "@/navigation/WorkspaceChrome";
 import { type ConnectionPhase, useWmuxConnection } from "@/state/use-wmux-connection";
 import {
   TerminalSurface,
@@ -287,123 +288,157 @@ export function WmuxApp() {
     }
   }, []);
 
+  const pasteIntoTerminal = useCallback(
+    async (providedText?: string): Promise<void> => {
+      if (!activePaneId) return;
+      try {
+        const text = providedText ?? (await readNativeClipboardText());
+        if (!text) {
+          showClipboardNotice("Clipboard has no text");
+          return;
+        }
+        terminalRef.current?.send({ t: "selection", paneId: activePaneId, action: "clear" });
+        terminalRef.current?.send({ t: "paste", paneId: activePaneId, text });
+        showClipboardNotice("Clipboard pasted");
+      } catch {
+        showClipboardNotice("Could not read the system clipboard");
+      }
+    },
+    [activePaneId, showClipboardNotice],
+  );
+
+  const showDashboard =
+    diagnosticsView === null && connection.bootstrap && dashboardPhase && navigation
+      ? {
+          bootstrap: connection.bootstrap,
+          navigation,
+          phase: dashboardPhase,
+        }
+      : null;
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: activeChromeTheme.canvas }]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
-        <ScrollView
-          bounces={false}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          style={styles.flex}
-        >
-          <View
-            style={[
-              styles.screen,
-              isLandscape && styles.screenLandscape,
-              { backgroundColor: activeChromeTheme.canvas },
-            ]}
+        {showDashboard ? (
+          <Dashboard
+            accessToken={connection.terminalAccessToken}
+            bootstrap={showDashboard.bootstrap}
+            endpoint={connection.endpoint}
+            error={connection.error}
+            isLandscape={isLandscape}
+            mutationBusy={mutationBusy}
+            navigation={showDashboard.navigation}
+            onAction={handleWorkspaceAction}
+            onBlurInput={() => {
+              inputTargetRef.current = null;
+              void inputRef.current?.blur();
+            }}
+            onClipboardNotice={showClipboardNotice}
+            onFocusInput={() => focusInput("terminal")}
+            onForget={() => {
+              setEndpointDraft(null);
+              setNavigationPreference(null);
+              setUsernameDraft(null);
+              void connection.forget();
+            }}
+            onNavigate={(next) => setNavigationPreference(next.selection)}
+            onOpenDiagnostics={() => setDiagnosticsView("renderer")}
+            onRetry={() => void connection.retry()}
+            onUpdateSettings={(settings) => void updateSettings(settings)}
+            phase={showDashboard.phase}
+            terminalRef={terminalRef}
+          />
+        ) : (
+          <ScrollView
+            bounces={false}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.flex}
           >
-            <AppHeader
-              onOpenDiagnostics={() => setDiagnosticsView("renderer")}
-              phase={connection.phase}
-              theme={activeChromeTheme}
-            />
-
-            {diagnosticsView === "renderer" ? (
-              <TerminalDiagnosticsCard
-                inputEvents={inputDiagnosticEvents}
-                inputFocused={inputFocused}
-                isLandscape={isLandscape}
-                onClose={closeDiagnostics}
-                onOpenNavigation={() => setDiagnosticsView("navigation")}
-                onOpenInput={() => {
-                  setInputDiagnosticEvents([]);
-                  focusInput("diagnostic");
-                }}
-              />
-            ) : diagnosticsView === "navigation" ? (
-              <NavigationDiagnosticsCard isLandscape={isLandscape} onClose={closeDiagnostics} />
-            ) : connection.bootstrap && dashboardPhase && navigation ? (
-              <Dashboard
-                accessToken={connection.terminalAccessToken}
-                bootstrap={connection.bootstrap}
-                endpoint={connection.endpoint}
-                error={connection.error}
-                isLandscape={isLandscape}
-                mutationBusy={mutationBusy}
-                navigation={navigation}
-                onAction={handleWorkspaceAction}
-                onClipboardNotice={showClipboardNotice}
-                onFocusInput={() => focusInput("terminal")}
-                onForget={() => {
-                  setEndpointDraft(null);
-                  setNavigationPreference(null);
-                  setUsernameDraft(null);
-                  void connection.forget();
-                }}
-                onNavigate={(next) => setNavigationPreference(next.selection)}
+            <View
+              style={[
+                styles.screen,
+                isLandscape && styles.screenLandscape,
+                { backgroundColor: activeChromeTheme.canvas },
+              ]}
+            >
+              <AppHeader
                 onOpenDiagnostics={() => setDiagnosticsView("renderer")}
-                onRetry={() => void connection.retry()}
-                onUpdateSettings={(settings) => void updateSettings(settings)}
-                phase={dashboardPhase}
-                protocolKind={connection.protocolStatus?.kind ?? "legacy"}
-                terminalRef={terminalRef}
-              />
-            ) : connection.phase === "authentication-required" ? (
-              <AuthenticationCard
-                accessToken={accessToken}
-                authMode={authMode}
-                endpoint={connection.endpoint}
-                error={connection.error}
-                isLandscape={isLandscape}
-                loginEnabled={connection.authLoginEnabled}
-                onAccessTokenChange={setAccessToken}
-                onAuthModeChange={setAuthMode}
-                onChangeServer={() => {
-                  setEndpointDraft(connection.endpoint);
-                  setNavigationPreference(null);
-                  connection.changeServer();
-                }}
-                onPasswordChange={setPassword}
-                onSubmitLogin={() => void submitLogin()}
-                onSubmitToken={() => void submitToken()}
-                onUsernameChange={setUsernameDraft}
-                password={password}
-                username={username}
-              />
-            ) : connection.phase === "protocol-mismatch" ? (
-              <MessageCard
-                actionLabel="Check again"
-                eyebrow="UPDATE REQUIRED"
-                message={connection.error ?? "The app and server protocol versions do not match."}
-                onAction={() => void connection.retry()}
-                onSecondary={() => {
-                  setEndpointDraft(connection.endpoint);
-                  setNavigationPreference(null);
-                  connection.changeServer();
-                }}
-                secondaryLabel="Change server"
-                title="wmux versions do not match"
-                tone="danger"
-              />
-            ) : (
-              <EndpointCard
-                endpoint={endpointInput}
-                error={connection.error}
-                isBusy={isBusy}
-                onEndpointChange={setEndpointDraft}
-                onSubmit={() => void connection.probe(endpointInput)}
                 phase={connection.phase}
+                theme={activeChromeTheme}
               />
-            )}
-          </View>
-        </ScrollView>
+
+              {diagnosticsView === "renderer" ? (
+                <TerminalDiagnosticsCard
+                  inputEvents={inputDiagnosticEvents}
+                  inputFocused={inputFocused}
+                  isLandscape={isLandscape}
+                  onClose={closeDiagnostics}
+                  onOpenNavigation={() => setDiagnosticsView("navigation")}
+                  onOpenInput={() => {
+                    setInputDiagnosticEvents([]);
+                    focusInput("diagnostic");
+                  }}
+                />
+              ) : diagnosticsView === "navigation" ? (
+                <NavigationDiagnosticsCard isLandscape={isLandscape} onClose={closeDiagnostics} />
+              ) : connection.phase === "authentication-required" ? (
+                <AuthenticationCard
+                  accessToken={accessToken}
+                  authMode={authMode}
+                  endpoint={connection.endpoint}
+                  error={connection.error}
+                  isLandscape={isLandscape}
+                  loginEnabled={connection.authLoginEnabled}
+                  onAccessTokenChange={setAccessToken}
+                  onAuthModeChange={setAuthMode}
+                  onChangeServer={() => {
+                    setEndpointDraft(connection.endpoint);
+                    setNavigationPreference(null);
+                    connection.changeServer();
+                  }}
+                  onPasswordChange={setPassword}
+                  onSubmitLogin={() => void submitLogin()}
+                  onSubmitToken={() => void submitToken()}
+                  onUsernameChange={setUsernameDraft}
+                  password={password}
+                  username={username}
+                />
+              ) : connection.phase === "protocol-mismatch" ? (
+                <MessageCard
+                  actionLabel="Check again"
+                  eyebrow="UPDATE REQUIRED"
+                  message={connection.error ?? "The app and server protocol versions do not match."}
+                  onAction={() => void connection.retry()}
+                  onSecondary={() => {
+                    setEndpointDraft(connection.endpoint);
+                    setNavigationPreference(null);
+                    connection.changeServer();
+                  }}
+                  secondaryLabel="Change server"
+                  title="wmux versions do not match"
+                  tone="danger"
+                />
+              ) : (
+                <EndpointCard
+                  endpoint={endpointInput}
+                  error={connection.error}
+                  isBusy={isBusy}
+                  onEndpointChange={setEndpointDraft}
+                  onSubmit={() => void connection.probe(endpointInput)}
+                  phase={connection.phase}
+                />
+              )}
+            </View>
+          </ScrollView>
+        )}
       </KeyboardAvoidingView>
       <TerminalInput
         onFocusChange={handleInputFocusChange}
         onKey={handleInputKey}
         onModifierState={handleModifierState}
+        onPaste={(text) => void pasteIntoTerminal(text)}
         onText={handleInputText}
         ref={inputRef}
       />
@@ -684,6 +719,7 @@ function NavigationDiagnosticsCard({ isLandscape, onClose }: { isLandscape: bool
   const [bootstrap, setBootstrap] = useState(navigationFixture);
   const [lastAction, setLastAction] = useState("Open the drawer, switch tabs, select a pane, or use the action sheet.");
   const [preference, setPreference] = useState<NavigationSelection | null>(null);
+  const [surface, setSurface] = useState<WorkspaceSurface>("terminal");
   const navigation = useMemo(() => resolveNavigation(bootstrap, preference), [bootstrap, preference]);
   const tabSwipeResponder = useMemo(
     () =>
@@ -718,11 +754,14 @@ function NavigationDiagnosticsCard({ isLandscape, onClose }: { isLandscape: bool
         isLandscape={isLandscape}
         navigation={navigation}
         onAction={(action) => setLastAction(`Action reached: ${action.type.replaceAll("-", " ")}`)}
+        onForget={() => setLastAction("Change server action reached")}
         onNavigate={(next) => {
           setPreference(next.selection);
           setLastAction(`Selected ${next.workspace.name} / ${next.tab.title} / ${next.pane.title}`);
         }}
         onOpenDiagnostics={() => setLastAction("Diagnostics action reached")}
+        onRefresh={() => setLastAction("Refresh action reached")}
+        onSurfaceChange={setSurface}
         onUpdateSettings={(settings) => {
           setBootstrap((current) => ({
             ...current,
@@ -731,6 +770,7 @@ function NavigationDiagnosticsCard({ isLandscape, onClose }: { isLandscape: bool
           }));
           setLastAction(`Applied ${settings.colorScheme} at ${settings.terminalFontSize}px`);
         }}
+        surface={surface}
       >
         <View
           accessibilityLabel="Swipe horizontally to change terminal tabs"
@@ -932,6 +972,7 @@ interface DashboardProps {
   mutationBusy: boolean;
   navigation: ResolvedNavigation;
   onAction: (action: WorkspaceAction) => void;
+  onBlurInput: () => void;
   onClipboardNotice: (message: string) => void;
   onFocusInput: () => void;
   onForget: () => void;
@@ -940,7 +981,6 @@ interface DashboardProps {
   onRetry: () => void;
   onUpdateSettings: (settings: WmuxSettings) => void;
   phase: "connected" | "reconnecting";
-  protocolKind: "legacy" | "verified";
   terminalRef: RefObject<TerminalSurfaceHandle | null>;
 }
 
@@ -953,6 +993,7 @@ function Dashboard({
   mutationBusy,
   navigation,
   onAction,
+  onBlurInput,
   onClipboardNotice,
   onFocusInput,
   onForget,
@@ -961,17 +1002,35 @@ function Dashboard({
   onRetry,
   onUpdateSettings,
   phase,
-  protocolKind,
   terminalRef,
 }: DashboardProps) {
-  const paneCount = useMemo(
-    () =>
-      bootstrap.workspaces.reduce(
-        (workspaceTotal, workspace) =>
-          workspaceTotal + workspace.tabs.reduce((tabTotal, tab) => tabTotal + tab.panes.length, 0),
-        0,
-      ),
-    [bootstrap.workspaces],
+  const [surface, setSurface] = useState<WorkspaceSurface>("terminal");
+
+  const changeSurface = useCallback(
+    (next: WorkspaceSurface): void => {
+      if (next === "chat") onBlurInput();
+      setSurface(next);
+    },
+    [onBlurInput],
+  );
+
+  const sendChatMessage = useCallback(
+    async (text: string): Promise<void> => {
+      const terminal = terminalRef.current;
+      if (!terminal) throw new Error("Terminal is not ready.");
+      terminal.send({ t: "paste", paneId: navigation.pane.id, text });
+      terminal.send({
+        t: "key",
+        paneId: navigation.pane.id,
+        key: "Enter",
+        code: "Enter",
+        ctrl: false,
+        alt: false,
+        shift: false,
+        meta: false,
+      });
+    },
+    [navigation.pane.id, terminalRef],
   );
 
   return (
@@ -982,68 +1041,59 @@ function Dashboard({
       mutationBusy={mutationBusy}
       navigation={navigation}
       onAction={onAction}
+      onForget={onForget}
       onNavigate={onNavigate}
       onOpenDiagnostics={onOpenDiagnostics}
+      onRefresh={onRetry}
+      onSurfaceChange={changeSurface}
       onUpdateSettings={onUpdateSettings}
+      surface={surface}
     >
-      <ConnectionBanner endpoint={endpoint} phase={phase} revision={bootstrap.revision} />
-      {error ? <InlineMessage message={error} tone="danger" /> : null}
-      <View style={styles.metricGrid}>
-        <MetricCard label="WORKSPACES" value={bootstrap.workspaces.length} />
-        <MetricCard label="PANES" value={paneCount} />
-        <MetricCard label="HOSTS ONLINE" value={bootstrap.machines.filter((machine) => machine.reachable).length} />
-      </View>
-
-      <LiveTerminalCard
-        accessToken={accessToken}
-        bootstrap={bootstrap}
-        endpoint={endpoint}
-        isLandscape={isLandscape}
-        key={navigation.pane.id}
-        navigation={navigation}
-        onClipboardNotice={onClipboardNotice}
-        onCycleTab={(direction) => {
-          const next = cycleTab(bootstrap, navigation.selection, direction);
-          if (next) onNavigate(next);
-        }}
-        onFocusInput={onFocusInput}
-        terminalRef={terminalRef}
-      />
-
-      <View style={styles.dashboardColumn}>
-        <SectionHeader count={bootstrap.machines.length} title="Machines" />
-        <View style={styles.listCard}>
-          {bootstrap.machines.length ? (
-            bootstrap.machines.map((machine) => <MachineRow key={machine.id} machine={machine} />)
-          ) : (
-            <EmptyRow message="No machines are configured." />
-          )}
+      {phase === "reconnecting" ? <ConnectionBanner phase={phase} /> : null}
+      {error ? (
+        <View style={styles.dashboardError}>
+          <InlineMessage message={error} tone="danger" />
         </View>
-      </View>
-
-      <View style={styles.sessionFooter}>
-        <View style={styles.sessionCopy}>
-          <Text style={styles.sessionTitle}>Secure session stored on this device</Text>
-          <Text style={styles.sessionMeta}>
-            {protocolKind === "verified"
-              ? "Protocol verified · live event stream"
-              : "Legacy protocol endpoint · live event stream"}
-          </Text>
+      ) : null}
+      <View style={styles.surfaceStack}>
+        <View style={[styles.dashboardSurface, surface !== "terminal" && styles.hiddenSurface]}>
+          <LiveTerminalCard
+            accessToken={accessToken}
+            bootstrap={bootstrap}
+            endpoint={endpoint}
+            navigation={navigation}
+            onClipboardNotice={onClipboardNotice}
+            onCycleTab={(direction) => {
+              const next = cycleTab(bootstrap, navigation.selection, direction);
+              if (next) onNavigate(next);
+            }}
+            onFocusInput={onFocusInput}
+            terminalRef={terminalRef}
+          />
         </View>
-        <View style={styles.footerActions}>
-          <SecondaryButton compact label="Refresh" onPress={onRetry} />
-          <SecondaryButton compact label="Forget" onPress={onForget} tone="danger" />
+        <View style={[styles.dashboardSurface, surface !== "chat" && styles.hiddenSurface]}>
+          <ChatSurface
+            bootstrap={bootstrap}
+            navigation={navigation}
+            onOpenTerminal={() => changeSurface("terminal")}
+            onSend={sendChatMessage}
+          />
         </View>
       </View>
     </WorkspaceChrome>
   );
 }
 
+function usePaneValue<T>(paneId: string, initialValue: T): [T, (value: T) => void] {
+  const [state, setState] = useState({ paneId, value: initialValue });
+  const setValue = useCallback((value: T): void => setState({ paneId, value }), [paneId]);
+  return [state.paneId === paneId ? state.value : initialValue, setValue];
+}
+
 function LiveTerminalCard({
   accessToken,
   bootstrap,
   endpoint,
-  isLandscape,
   navigation,
   onClipboardNotice,
   onCycleTab,
@@ -1053,23 +1103,25 @@ function LiveTerminalCard({
   accessToken: string | undefined;
   bootstrap: BootstrapPayload;
   endpoint: string;
-  isLandscape: boolean;
   navigation: ResolvedNavigation;
   onClipboardNotice: (message: string) => void;
   onCycleTab: (direction: -1 | 1) => void;
   onFocusInput: () => void;
   terminalRef: RefObject<TerminalSurfaceHandle | null>;
 }) {
-  const [altScreen, setAltScreen] = useState(false);
+  const paneId = navigation.pane.id;
+  const [altScreen, setAltScreen] = usePaneValue(paneId, false);
   const [clipboardBusy, setClipboardBusy] = useState(false);
-  const [cursor, setCursor] = useState<TerminalCursor>();
-  const [metrics, setMetrics] = useState<TerminalMetrics>();
-  const [paneConnection, setPaneConnection] = useState<"connecting" | "live" | "lost" | "exited">("connecting");
-  const [paneIssue, setPaneIssue] = useState<string | undefined>();
-  const [selection, setSelection] = useState<TerminalSelection>({ active: false });
+  const [cursor, setCursor] = usePaneValue<TerminalCursor | undefined>(paneId, undefined);
+  const [metrics, setMetrics] = usePaneValue<TerminalMetrics | undefined>(paneId, undefined);
+  const [paneConnection, setPaneConnection] = usePaneValue<"connecting" | "live" | "lost" | "exited">(
+    paneId,
+    "connecting",
+  );
+  const [paneIssue, setPaneIssue] = usePaneValue<string | undefined>(paneId, undefined);
+  const [selection, setSelection] = usePaneValue<TerminalSelection>(paneId, { active: false });
   const [terminalSize, setTerminalSize] = useState({ height: 0, width: 0 });
   const mountedRef = useRef(true);
-  const paneId = navigation.pane.id;
   const api = useMemo(() => new WmuxApiClient(endpoint, accessToken), [accessToken, endpoint]);
   const terminalSession = useMemo<TerminalSurfaceSession>(
     () => ({
@@ -1123,28 +1175,8 @@ function LiveTerminalCard({
         if (mountedRef.current) setPaneIssue("Could not write to the system clipboard.");
       }
     },
-    [onClipboardNotice],
+    [onClipboardNotice, setPaneIssue],
   );
-
-  const pasteText = useCallback(async (): Promise<void> => {
-    if (clipboardBusy) return;
-    setClipboardBusy(true);
-    try {
-      const text = await readNativeClipboardText();
-      if (!mountedRef.current) return;
-      if (!text) {
-        onClipboardNotice("Clipboard has no text");
-        return;
-      }
-      send({ t: "paste", paneId, text });
-      setSelection({ active: false });
-      onClipboardNotice("Clipboard pasted");
-    } catch {
-      if (mountedRef.current) setPaneIssue("Could not read text from the system clipboard.");
-    } finally {
-      if (mountedRef.current) setClipboardBusy(false);
-    }
-  }, [clipboardBusy, onClipboardNotice, paneId, send]);
 
   const pasteClipboardImage = useCallback(async (): Promise<void> => {
     if (clipboardBusy) return;
@@ -1174,7 +1206,7 @@ function LiveTerminalCard({
     } finally {
       if (mountedRef.current) setClipboardBusy(false);
     }
-  }, [api, clipboardBusy, navigation.pane.title, onClipboardNotice, paneId, send]);
+  }, [api, clipboardBusy, navigation.pane.title, onClipboardNotice, paneId, send, setPaneIssue]);
 
   const attachPhotos = useCallback(async (): Promise<void> => {
     if (clipboardBusy) return;
@@ -1208,7 +1240,7 @@ function LiveTerminalCard({
     } finally {
       if (mountedRef.current) setClipboardBusy(false);
     }
-  }, [api, clipboardBusy, endpoint, onClipboardNotice, paneId, send]);
+  }, [api, clipboardBusy, endpoint, onClipboardNotice, paneId, send, setPaneIssue]);
 
   const openMediaActions = useCallback((): void => {
     Alert.alert("Terminal media", "Paste an image from the system clipboard or upload photos as pane attachments.", [
@@ -1225,31 +1257,22 @@ function LiveTerminalCard({
 
   return (
     <View style={styles.terminalCard}>
-      <View style={styles.terminalHeader}>
-        <View style={styles.terminalHeaderCopy}>
-          <Text numberOfLines={1} style={styles.terminalTitle}>
-            {navigation.tab.title}
-          </Text>
-          <Text numberOfLines={1} style={styles.terminalMeta}>
-            {navigation.workspace.name} · {navigation.pane.title}
-          </Text>
-        </View>
-        <View style={styles.terminalTools}>
-          <TerminalToolButton busy={clipboardBusy} label="Paste" onPress={() => void pasteText()} />
-          <TerminalToolButton busy={clipboardBusy} label="Media" onPress={openMediaActions} />
-        </View>
-        <View style={styles.terminalState}>
-          <View
-            style={[
-              styles.liveIndicator,
-              paneConnection !== "live" && styles.liveIndicatorWarning,
-              paneConnection === "lost" && styles.liveIndicatorLost,
-            ]}
-          />
-          <Text style={styles.terminalStateText}>{paneConnection}</Text>
-        </View>
-      </View>
       <View onLayout={handleTerminalLayout} style={styles.terminalGestureSurface}>
+        <View style={styles.terminalOverlay}>
+          {paneConnection === "live" ? null : (
+            <View style={styles.terminalState}>
+              <View
+                style={[
+                  styles.liveIndicator,
+                  styles.liveIndicatorWarning,
+                  paneConnection === "lost" && styles.liveIndicatorLost,
+                ]}
+              />
+              <Text style={styles.terminalStateText}>{paneConnection}</Text>
+            </View>
+          )}
+          <TerminalToolButton busy={clipboardBusy} label="•••" onPress={openMediaActions} />
+        </View>
         <TerminalSurface
           onMessage={(message) => {
             if ("paneId" in message && message.paneId !== terminalSession.paneId) return;
@@ -1284,7 +1307,7 @@ function LiveTerminalCard({
           }}
           ref={terminalRef}
           session={terminalSession}
-          style={[styles.liveTerminalSurface, isLandscape && styles.liveTerminalSurfaceLandscape]}
+          style={styles.liveTerminalSurface}
         />
         {terminalSize.width > 0 && terminalSize.height > 0 ? (
           <TerminalInteractionLayer
@@ -1310,7 +1333,7 @@ function LiveTerminalCard({
 function TerminalToolButton({ busy, label, onPress }: { busy: boolean; label: string; onPress: () => void }) {
   return (
     <Pressable
-      accessibilityLabel={`${label} in terminal`}
+      accessibilityLabel="Open terminal media actions"
       accessibilityRole="button"
       disabled={busy}
       onPress={onPress}
@@ -1336,69 +1359,13 @@ function ClipboardToast({ message }: { message: string }) {
   );
 }
 
-function ConnectionBanner({
-  endpoint,
-  phase,
-  revision,
-}: {
-  endpoint: string;
-  phase: "connected" | "reconnecting";
-  revision: number;
-}) {
-  const isConnected = phase === "connected";
+function ConnectionBanner({ phase }: { phase: "connected" | "reconnecting" }) {
   return (
-    <View style={[styles.connectionBanner, !isConnected && styles.connectionBannerWarning]}>
-      <View style={[styles.liveIndicator, !isConnected && styles.liveIndicatorWarning]} />
-      <View style={styles.connectionCopy}>
-        <Text style={styles.connectionTitle}>{isConnected ? "Live on Tailscale" : "Reconnecting"}</Text>
-        <Text numberOfLines={1} style={styles.connectionEndpoint}>
-          {endpoint}
-        </Text>
-      </View>
-      <Text style={styles.connectionRevision}>r{revision}</Text>
+    <View style={[styles.connectionBanner, phase === "reconnecting" && styles.connectionBannerWarning]}>
+      <View style={[styles.liveIndicator, styles.liveIndicatorWarning]} />
+      <Text style={styles.connectionTitle}>Reconnecting to wmux</Text>
     </View>
   );
-}
-
-function MetricCard({ label, value }: { label: string; value: number }) {
-  return (
-    <View style={styles.metricCard}>
-      <Text style={styles.metricValue}>{value}</Text>
-      <Text style={styles.metricLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function SectionHeader({ count, title }: { count: number; title: string }) {
-  return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <Text style={styles.sectionCount}>{count}</Text>
-    </View>
-  );
-}
-
-function MachineRow({ machine }: { machine: MachineStatus }) {
-  return (
-    <View style={styles.listRow}>
-      <View style={[styles.machineDot, machine.reachable ? styles.machineOnline : styles.machineOffline]} />
-      <View style={styles.rowCopy}>
-        <Text numberOfLines={1} style={styles.rowTitle}>
-          {machine.name}
-        </Text>
-        <Text numberOfLines={1} style={styles.rowMeta}>
-          {machine.platform} · {machine.kind}
-        </Text>
-      </View>
-      <Text style={[styles.machineState, !machine.reachable && styles.machineStateOffline]}>
-        {machine.reachable ? "online" : "offline"}
-      </Text>
-    </View>
-  );
-}
-
-function EmptyRow({ message }: { message: string }) {
-  return <Text style={styles.emptyRow}>{message}</Text>;
 }
 
 interface MessageCardProps {
@@ -2014,13 +1981,13 @@ const styles = StyleSheet.create({
   },
   connectionBanner: {
     alignItems: "center",
-    backgroundColor: colors.successDim,
-    borderColor: "#285b40",
-    borderRadius: 13,
-    borderWidth: 1,
+    backgroundColor: colors.accentDim,
+    borderBottomColor: colors.accentLine,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",
-    minHeight: 58,
-    paddingHorizontal: 14,
+    gap: 8,
+    minHeight: 32,
+    paddingHorizontal: 10,
   },
   connectionBannerWarning: {
     backgroundColor: colors.accentDim,
@@ -2044,8 +2011,9 @@ const styles = StyleSheet.create({
   },
   connectionTitle: {
     color: colors.text,
-    fontSize: 14,
-    fontWeight: "800",
+    fontFamily: fonts.mono,
+    fontSize: 10,
+    fontWeight: "700",
   },
   connectionEndpoint: {
     color: colors.secondaryText,
@@ -2086,14 +2054,24 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   terminalCard: {
-    backgroundColor: colors.panel,
-    borderColor: colors.line,
-    borderRadius: 14,
-    borderWidth: 1,
+    backgroundColor: colors.terminal,
+    flex: 1,
+    minHeight: 0,
     overflow: "hidden",
   },
   terminalGestureSurface: {
+    flex: 1,
+    minHeight: 0,
     position: "relative",
+  },
+  terminalOverlay: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 6,
+    position: "absolute",
+    right: 7,
+    top: 7,
+    zIndex: 8,
   },
   terminalHeader: {
     alignItems: "center",
@@ -2120,9 +2098,14 @@ const styles = StyleSheet.create({
   },
   terminalState: {
     alignItems: "center",
+    backgroundColor: "#11151ae8",
+    borderColor: colors.line,
+    borderRadius: 8,
+    borderWidth: 1,
     flexDirection: "row",
-    gap: 7,
-    marginLeft: 10,
+    gap: 6,
+    minHeight: 30,
+    paddingHorizontal: 8,
   },
   terminalStateText: {
     color: colors.secondaryText,
@@ -2136,13 +2119,14 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   terminalToolButton: {
-    backgroundColor: colors.terminal,
+    alignItems: "center",
+    backgroundColor: "#11151ae8",
     borderColor: colors.line,
     borderRadius: 8,
     borderWidth: 1,
     minHeight: 32,
-    minWidth: 50,
-    paddingHorizontal: 8,
+    minWidth: 38,
+    paddingHorizontal: 7,
     justifyContent: "center",
   },
   terminalToolButtonText: {
@@ -2154,12 +2138,8 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   liveTerminalSurface: {
-    height: 360,
-    minHeight: 360,
-  },
-  liveTerminalSurfaceLandscape: {
-    height: 280,
-    minHeight: 280,
+    flex: 1,
+    minHeight: 0,
   },
   terminalIssue: {
     backgroundColor: "#30191a",
@@ -2169,6 +2149,25 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     paddingHorizontal: 14,
     paddingVertical: 9,
+  },
+  surfaceStack: {
+    flex: 1,
+    minHeight: 0,
+    position: "relative",
+  },
+  dashboardSurface: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
+  hiddenSurface: {
+    display: "none",
+  },
+  dashboardError: {
+    paddingHorizontal: 8,
+    paddingTop: 6,
   },
   clipboardToast: {
     alignItems: "center",

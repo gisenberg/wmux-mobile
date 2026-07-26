@@ -29,6 +29,7 @@ interface TerminalInputProps {
   onFocusChange?: (focused: boolean) => void;
   onKey: (event: WmuxKeyInputKeyEvent) => void;
   onModifierState?: (event: WmuxKeyInputModifierEvent) => void;
+  onPaste?: (text?: string) => void;
   onText: (event: WmuxKeyInputTextEvent) => void;
 }
 
@@ -50,7 +51,7 @@ const accessoryKeys: AccessoryKey[] = [
 const literalKeys = ["|", "/", "~", "-", "_", "`"] as const;
 
 export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>(function TerminalInput(
-  { altSendsMeta = false, onFocusChange, onKey, onModifierState, onText },
+  { altSendsMeta = false, onFocusChange, onKey, onModifierState, onPaste, onText },
   forwardedRef,
 ) {
   const nativeRef = useRef<WmuxKeyInputRef>(null);
@@ -204,6 +205,7 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
         onFocusChange={(event) => handleFocusChange(event.nativeEvent.focused)}
         onKey={(event) => handleNativeKey(event.nativeEvent)}
         onModifierState={(event) => onModifierState?.(event.nativeEvent)}
+        onPaste={(event) => onPaste?.(event.nativeEvent.text)}
         onText={(event) => handleNativeText(event.nativeEvent)}
         ref={nativeRef}
         style={styles.nativeInput}
@@ -225,6 +227,7 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
                   onPress={() => sendAccessoryKey(item.key, item.code)}
                 />
               ))}
+              <AccessoryButton label="Paste" onPress={() => onPaste?.()} />
               <ModifierButton label="Ctrl" mode={modifiers.ctrl} onPress={() => tapModifier("ctrl")} />
               <ModifierButton label="Alt" mode={modifiers.alt} onPress={() => tapModifier("alt")} />
               {accessoryKeys.slice(2).map((item) => (

@@ -120,6 +120,30 @@ test("owns pane sockets and preserves raw and checkpoint replay ordering", async
     .toContain("checkpoint:checkpoint replay");
 });
 
+test("repaints a reattach replay without waiting for terminal input", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-reattach";
+  const terminal = page.locator(`.terminal-session[data-pane-id="${paneId}"]`);
+  await initializePane(harness, paneId, 640, 360);
+  await harness.send(paneId, ready(paneId, "raw", "\x1b[2J\x1b[Hbefore reattach\r\n"));
+  await expect
+    .poll(async () =>
+      (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join("\n"),
+    )
+    .toContain("before reattach");
+  const before = await terminal.screenshot();
+
+  await harness.send(paneId, ready(paneId, "checkpoint", "\x1b[2J\x1b[Hpainted on reattach\r\n"));
+
+  await expect
+    .poll(async () =>
+      (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join("\n"),
+    )
+    .toContain("painted on reattach");
+  await expect.poll(async () => Buffer.compare(await terminal.screenshot(), before)).not.toBe(0);
+  expect(inputPayloads(await harness.socket(paneId))).toEqual([]);
+});
+
 test("emits low-frequency control signals without bridging terminal output", async ({ page }) => {
   const harness = await openHarness(page);
   await initializePane(harness, "pane-signals", 560, 320);

@@ -22,6 +22,7 @@ import expo.modules.kotlin.views.ExpoView
 class WmuxKeyInputView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
   private val onKey by EventDispatcher<Map<String, Any>>()
   private val onText by EventDispatcher<Map<String, String>>()
+  private val onPaste by EventDispatcher<Map<String, String>>()
   private val onFocusChange by EventDispatcher<Map<String, Boolean>>()
   private val onModifierState by EventDispatcher<Map<String, String>>()
 

@@ -148,6 +148,7 @@ export class TerminalSession {
     window.requestAnimationFrame(() => {
       if (this.disposed) return;
       this.fit();
+      this.redrawVisibleTerminal();
       this.emitMetrics();
       this.emitCursor();
       this.sendResize(true);
@@ -379,11 +380,20 @@ export class TerminalSession {
       for (const output of buffered) this.pipeline.push(output);
       window.requestAnimationFrame(() => {
         if (this.disposed || generation !== this.replayGeneration) return;
+        this.redrawVisibleTerminal();
         this.emitMetrics();
         this.emitCursor();
       });
     };
     drain();
+  }
+
+  private redrawVisibleTerminal(): void {
+    if (!this.visible) return;
+    const renderer = this.terminal.renderer;
+    const terminal = this.terminal.wasmTerm;
+    if (!renderer || !terminal) return;
+    renderer.render(terminal, true, this.terminal.viewportY, this.terminal);
   }
 
   private sendKey(message: Extract<ToHost, { t: "key" }>): void {
