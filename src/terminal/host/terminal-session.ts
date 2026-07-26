@@ -393,6 +393,7 @@ export class TerminalSession {
     const renderer = this.terminal.renderer;
     const terminal = this.terminal.wasmTerm;
     if (!renderer || !terminal) return;
+    renderer.resize(this.terminal.cols, this.terminal.rows);
     renderer.render(terminal, true, this.terminal.viewportY, this.terminal);
   }
 

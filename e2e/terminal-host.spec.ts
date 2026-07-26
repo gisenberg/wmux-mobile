@@ -132,6 +132,29 @@ test("repaints a reattach replay without waiting for terminal input", async ({ p
     )
     .toContain("before reattach");
   const before = await terminal.screenshot();
+  await page.evaluate((targetPaneId) => {
+    const canvas = document.querySelector<HTMLCanvasElement>(
+      `.terminal-session[data-pane-id="${targetPaneId}"] canvas`,
+    );
+    const widthDescriptor = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "width");
+    if (!canvas || !widthDescriptor?.get || !widthDescriptor.set) {
+      throw new Error("Could not instrument the terminal canvas backing store");
+    }
+    let widthWrites = 0;
+    Object.defineProperty(canvas, "width", {
+      configurable: true,
+      get: () => widthDescriptor.get?.call(canvas) as number,
+      set: (value: number) => {
+        widthWrites += 1;
+        widthDescriptor.set?.call(canvas, value);
+      },
+    });
+    (
+      canvas as HTMLCanvasElement & {
+        __wmuxBackingStoreWidthWrites?: () => number;
+      }
+    ).__wmuxBackingStoreWidthWrites = () => widthWrites;
+  }, paneId);
 
   await harness.send(paneId, ready(paneId, "checkpoint", "\x1b[2J\x1b[Hpainted on reattach\r\n"));
 
@@ -141,6 +164,18 @@ test("repaints a reattach replay without waiting for terminal input", async ({ p
     )
     .toContain("painted on reattach");
   await expect.poll(async () => Buffer.compare(await terminal.screenshot(), before)).not.toBe(0);
+  await expect
+    .poll(() =>
+      page.evaluate((targetPaneId) => {
+        const canvas = document.querySelector<
+          HTMLCanvasElement & {
+            __wmuxBackingStoreWidthWrites?: () => number;
+          }
+        >(`.terminal-session[data-pane-id="${targetPaneId}"] canvas`);
+        return canvas?.__wmuxBackingStoreWidthWrites?.() ?? 0;
+      }, paneId),
+    )
+    .toBeGreaterThan(0);
   expect(inputPayloads(await harness.socket(paneId))).toEqual([]);
 });
 
