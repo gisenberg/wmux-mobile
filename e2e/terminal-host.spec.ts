@@ -156,6 +156,18 @@ test("owns pane sockets and preserves raw and checkpoint replay ordering", async
   });
   await expect.poll(() => inputPayloads(rawSocket)).toContain("\x1b[A");
 
+  await harness.dispatch({
+    t: "key",
+    paneId: "pane-raw",
+    key: "Enter",
+    code: "Enter",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  });
+  await expect.poll(() => inputPayloads(rawSocket)).toContain("\r");
+
   await harness.send("pane-raw", { type: "output", paneId: "pane-raw", data: "\x1b[?1h" });
   await harness.dispatch({
     t: "key",

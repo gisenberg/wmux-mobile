@@ -256,6 +256,28 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
     commitUnmarkedText()
   }
 
+  func textView(
+    _ textView: UITextView,
+    shouldChangeTextIn range: NSRange,
+    replacementText text: String
+  ) -> Bool {
+    guard textView.markedTextRange == nil, text == "\n" || text == "\r" || text == "\r\n" else {
+      return true
+    }
+    sendKey(
+      key: "Enter",
+      code: "Enter",
+      ctrl: ctrlState != .off,
+      alt: altState != .off,
+      shift: false,
+      meta: false,
+      repeatKey: false,
+      source: "ime"
+    )
+    consumeArmedModifiers()
+    return false
+  }
+
   private func commitUnmarkedText() {
     guard !isResettingText, textView.markedTextRange == nil else {
       return
