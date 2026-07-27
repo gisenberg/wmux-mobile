@@ -47,16 +47,6 @@ jobs:
         with:
           clean: true
 
-      - name: Use Node.js 22
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22.13.1
-
-      - name: Materialize the Android signing key
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: rtk node scripts/ci/prepare-android-signing.mjs
-
       - name: Prepare persistent build caches
         run: |
           rtk mkdir -p "$HOME/.cache/wmux-mobile-android/gradle"
@@ -68,6 +58,21 @@ jobs:
             --file docker/android/Dockerfile \
             --tag "$ANDROID_IMAGE" \
             docker/android
+
+      - name: Materialize the Android signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          rtk docker run --rm \
+            --env ANDROID_KEYSTORE_BASE64 \
+            --env GITHUB_ENV \
+            --env RUNNER_TEMP \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace" \
+            --mount "type=bind,source=$RUNNER_TEMP,target=$RUNNER_TEMP" \
+            --mount "type=bind,source=$(rtk which rtk),target=/usr/local/bin/rtk,readonly" \
+            --workdir /workspace \
+            "$ANDROID_IMAGE" \
+            rtk node scripts/ci/prepare-android-signing.mjs
 
       - name: Build the standalone APK
         env:
@@ -98,10 +103,33 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          rtk node \
-            scripts/ci/publish-android-release.mjs \
-            android/app/build/outputs/apk/release/output-metadata.json
+          rtk docker run --rm \
+            --env ANDROID_VERSION_CODE \
+            --env GITHUB_API_URL \
+            --env GITHUB_REF_NAME \
+            --env GITHUB_REF_TYPE \
+            --env GITHUB_REPOSITORY \
+            --env GITHUB_RUN_NUMBER \
+            --env GITHUB_SHA \
+            --env GITHUB_STEP_SUMMARY \
+            --env GITHUB_TOKEN \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace" \
+            --mount "type=bind,source=$RUNNER_TEMP,target=$RUNNER_TEMP" \
+            --mount "type=bind,source=$(rtk which rtk),target=/usr/local/bin/rtk,readonly" \
+            --workdir /workspace \
+            "$ANDROID_IMAGE" \
+            rtk node \
+              scripts/ci/publish-android-release.mjs \
+              android/app/build/outputs/apk/release/output-metadata.json
 
       - name: Remove the temporary Android signing key
-        if: always()
-        run: rtk node scripts/ci/cleanup-android-signing.mjs
+        if: always() && env.ANDROID_KEYSTORE_PATH != ''
+        run: |
+          rtk docker run --rm \
+            --env ANDROID_KEYSTORE_PATH \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace" \
+            --mount "type=bind,source=$RUNNER_TEMP,target=$RUNNER_TEMP" \
+            --mount "type=bind,source=$(rtk which rtk),target=/usr/local/bin/rtk,readonly" \
+            --workdir /workspace \
+            "$ANDROID_IMAGE" \
+            rtk node scripts/ci/cleanup-android-signing.mjs
