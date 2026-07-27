@@ -188,6 +188,64 @@ test("owns pane sockets and preserves raw and checkpoint replay ordering", async
     .toContain("checkpoint:checkpoint replay");
 });
 
+test("claims PTY resize ownership without sending terminal bytes", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-resize-claim";
+  await initializePane(harness, paneId, 390, 420);
+  const socket = await harness.socket(paneId);
+  socket.received.splice(0);
+
+  await harness.dispatch({ t: "claimResize", paneId });
+
+  await expect
+    .poll(() =>
+      socket.received.find(
+        (message): message is Extract<PaneClientMessage, { type: "input" }> =>
+          message.type === "input" && message.data === "",
+      ),
+    )
+    .toMatchObject({ type: "input", data: "", terminalResponse: true });
+  const claimIndex = socket.received.findIndex((message) => message.type === "input" && message.data === "");
+  expect(socket.received[claimIndex - 1]).toEqual({
+    type: "activate",
+    cols: expect.any(Number),
+    rows: expect.any(Number),
+    foreground: true,
+  });
+  expect(inputPayloads(socket)).toEqual([""]);
+});
+
+test("preserves a resize ownership claim while the pane socket connects", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-pending-resize-claim";
+  const commands: ToHost[] = [
+    { t: "init", serverUrl: "https://wmux.invalid", token: "test-token", settings },
+    { t: "attach", paneId },
+    { t: "show", paneId },
+    { t: "viewport", paneId, widthPx: 390, heightPx: 420, dpr: 1 },
+    { t: "claimResize", paneId },
+  ];
+  await page.evaluate((messages) => {
+    const target = window as typeof window & { __wmuxHost?: { dispatch: (input: unknown) => void } };
+    for (const message of messages) target.__wmuxHost?.dispatch(message);
+  }, commands);
+
+  const socket = await harness.socket(paneId);
+  await expect
+    .poll(() =>
+      socket.received.find(
+        (message): message is Extract<PaneClientMessage, { type: "input" }> =>
+          message.type === "input" && message.data === "",
+      ),
+    )
+    .toMatchObject({ type: "input", data: "", terminalResponse: true });
+  const claimIndex = socket.received.findIndex((message) => message.type === "input" && message.data === "");
+  expect(socket.received[claimIndex - 1]).toMatchObject({
+    type: "activate",
+    foreground: true,
+  });
+});
+
 test("repaints a reattach replay without waiting for terminal input", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-reattach";

@@ -197,6 +197,7 @@ type ToHost =
   | { t: "show"; paneId: string }
   | { t: "detach"; paneId: string }
   | { t: "viewport"; paneId: string; widthPx: number; heightPx: number; dpr: number }
+  | { t: "claimResize"; paneId: string }
   | { t: "key"; paneId: string; key: string; code: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }
   | { t: "text"; paneId: string; data: string }
   | { t: "paste"; paneId: string; text: string }
@@ -243,6 +244,8 @@ type ToNative =
 Native computes the pixel box (it knows safe areas, the drawer, the toolbar, and the exact keyboard frame).
 The host measures cell metrics from the loaded font and derives `cols` and `rows`.
 The host sends the `resize` on the pane socket itself and reports `metrics` back to native for display.
+When the user focuses native terminal input, `claimResize` promotes the mobile pane socket to resize owner without sending terminal bytes.
+This ensures another attached client cannot leave the phone displaying a PTY frame sized for a desktop.
 
 This is a strict improvement over the web client's `mobile-viewport.ts`, which infers keyboard state from `visualViewport` deltas with tolerance heuristics.
 Native gets the real number from `keyboardWillChangeFrame` and the Android insets API.

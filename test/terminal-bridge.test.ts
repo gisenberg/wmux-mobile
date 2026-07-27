@@ -28,6 +28,7 @@ test("terminal bridge decodes every native-to-host command family", () => {
     { t: "show", paneId: "pane-1" },
     { t: "detach", paneId: "pane-1" },
     { t: "viewport", paneId: "pane-1", widthPx: 390, heightPx: 700, dpr: 3 },
+    { t: "claimResize", paneId: "pane-1" },
     {
       t: "key",
       paneId: "pane-1",

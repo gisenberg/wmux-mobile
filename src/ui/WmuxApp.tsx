@@ -114,10 +114,16 @@ export function WmuxApp() {
     setInputDiagnosticEvents((current) => [message, ...current].slice(0, 5));
   }, []);
 
-  const focusInput = useCallback((target: "diagnostic" | "terminal"): void => {
-    inputTargetRef.current = target;
-    requestAnimationFrame(() => void inputRef.current?.focus());
-  }, []);
+  const focusInput = useCallback(
+    (target: "diagnostic" | "terminal"): void => {
+      inputTargetRef.current = target;
+      if (target === "terminal" && activePaneId) {
+        terminalRef.current?.send({ t: "claimResize", paneId: activePaneId });
+      }
+      requestAnimationFrame(() => void inputRef.current?.focus());
+    },
+    [activePaneId],
+  );
 
   const handleInputFocusChange = useCallback(
     (focused: boolean): void => {

@@ -82,6 +82,7 @@ export class TerminalSession {
   private waitingForDurableRefresh = false;
   private selectionFrame: number | undefined;
   private selectionIncludeText = false;
+  private resizeClaimPending = false;
 
   constructor(options: TerminalSessionOptions) {
     this.paneId = options.paneId;
@@ -155,7 +156,10 @@ export class TerminalSession {
     this.visible = visible;
     this.element.hidden = !visible;
     this.element.setAttribute("aria-hidden", visible ? "false" : "true");
-    if (!visible) return;
+    if (!visible) {
+      this.resizeClaimPending = false;
+      return;
+    }
     this.onActivity();
     window.requestAnimationFrame(() => {
       if (this.disposed) return;
@@ -184,6 +188,10 @@ export class TerminalSession {
     this.onActivity();
     if (message.t === "viewport") {
       this.setViewport(message.widthPx, message.heightPx, message.dpr);
+      return;
+    }
+    if (message.t === "claimResize") {
+      this.claimResizeOwnership();
       return;
     }
     if (message.t === "key") {
@@ -229,7 +237,8 @@ export class TerminalSession {
     socket.addEventListener("open", () => {
       if (this.socket !== socket || this.disposed) return;
       this.reconnectAttempt = 0;
-      this.sendResize(this.visible);
+      if (this.resizeClaimPending) this.flushResizeOwnershipClaim();
+      else this.sendResize(this.visible);
     });
     socket.addEventListener("message", (event) => {
       if (this.socket !== socket || this.disposed || typeof event.data !== "string") return;
@@ -537,6 +546,20 @@ export class TerminalSession {
     }
     const data = this.keyEncoder.encode(message);
     if (data) this.sendInput(data);
+  }
+
+  private claimResizeOwnership(): void {
+    if (!this.visible) return;
+    this.resizeClaimPending = true;
+    this.flushResizeOwnershipClaim();
+  }
+
+  private flushResizeOwnershipClaim(): void {
+    if (!this.resizeClaimPending || !this.visible || this.socket?.readyState !== WebSocket.OPEN) return;
+    this.fit();
+    this.sendResize(true);
+    this.sendSocketMessage({ type: "input", data: "", terminalResponse: true });
+    this.resizeClaimPending = false;
   }
 
   private sendInput(data: string): void {

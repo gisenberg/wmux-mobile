@@ -24,6 +24,7 @@ export type ToHost =
   | { t: "show"; paneId: string }
   | { t: "detach"; paneId: string }
   | { t: "viewport"; paneId: string; widthPx: number; heightPx: number; dpr: number }
+  | { t: "claimResize"; paneId: string }
   | {
       t: "key";
       paneId: string;
@@ -71,6 +72,7 @@ const toHostTypes = new Set([
   "show",
   "detach",
   "viewport",
+  "claimResize",
   "key",
   "text",
   "paste",
@@ -109,7 +111,13 @@ export const decodeToHost = (input: unknown): BridgeDecodeResult<ToHost> => {
   }
   const paneId = message.paneId;
 
-  if (message.t === "attach" || message.t === "show" || message.t === "detach" || message.t === "scrollToBottom") {
+  if (
+    message.t === "attach" ||
+    message.t === "show" ||
+    message.t === "detach" ||
+    message.t === "claimResize" ||
+    message.t === "scrollToBottom"
+  ) {
     return valid({ t: message.t, paneId });
   }
   if (message.t === "viewport") {
