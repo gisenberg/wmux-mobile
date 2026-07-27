@@ -4,6 +4,7 @@ export interface ChromeTheme {
   accent: string;
   accentDim: string;
   canvas: string;
+  faint: string;
   line: string;
   muted: string;
   panel: string;
@@ -20,6 +21,7 @@ const themes: Record<TerminalColorSchemeId, ChromeTheme> = {
     accent: "#ffb454",
     accentDim: "#2a2015",
     canvas: "#0a0c0f",
+    faint: "#505864",
     line: "#252a31",
     muted: "#818996",
     panel: "#11151a",
@@ -29,6 +31,7 @@ const themes: Record<TerminalColorSchemeId, ChromeTheme> = {
     accent: "#cba6f7",
     accentDim: "#29243a",
     canvas: "#11111b",
+    faint: "#5f667f",
     line: "#313244",
     muted: "#9399b2",
     panel: "#181825",
@@ -38,6 +41,7 @@ const themes: Record<TerminalColorSchemeId, ChromeTheme> = {
     accent: "#bd93f9",
     accentDim: "#302645",
     canvas: "#191a21",
+    faint: "#626578",
     line: "#44475a",
     muted: "#9295a8",
     panel: "#282a36",
@@ -47,6 +51,7 @@ const themes: Record<TerminalColorSchemeId, ChromeTheme> = {
     accent: "#88c0d0",
     accentDim: "#243640",
     canvas: "#242933",
+    faint: "#697386",
     line: "#4c566a",
     muted: "#8d98aa",
     panel: "#2e3440",
@@ -56,6 +61,7 @@ const themes: Record<TerminalColorSchemeId, ChromeTheme> = {
     accent: "#2aa198",
     accentDim: "#123b3a",
     canvas: "#001f27",
+    faint: "#526f75",
     line: "#174652",
     muted: "#839496",
     panel: "#002b36",
@@ -65,6 +71,7 @@ const themes: Record<TerminalColorSchemeId, ChromeTheme> = {
     accent: "#fabd2f",
     accentDim: "#3a301c",
     canvas: "#1d2021",
+    faint: "#665c54",
     line: "#504945",
     muted: "#a89984",
     panel: "#282828",
@@ -74,6 +81,7 @@ const themes: Record<TerminalColorSchemeId, ChromeTheme> = {
     accent: "#7aa2f7",
     accentDim: "#202c4a",
     canvas: "#16161e",
+    faint: "#565f89",
     line: "#3b4261",
     muted: "#787c99",
     panel: "#1a1b26",

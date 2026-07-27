@@ -297,6 +297,8 @@ Acceptance: with the app focused and a shell attached, no predictive bar, no aut
 - Edge swipe from the left opens the workspace drawer, implemented with `react-native-gesture-handler`.
   Disable the iOS interactive pop gesture on the terminal screen so it cannot compete.
   There is no browser back gesture to fight.
+- The drawer uses dense TUI-inspired workspace rows with normalized active-pane CWD, agent-state glyphs, and unread alert badges.
+  Generic shell labels and decorative terminal icons are omitted.
 - Horizontal swipe on the terminal switches tabs when the terminal is not in alternate-screen mode.
   When `altScreen` is active, the gesture is disabled so it does not fight a full-screen TUI.
 - Vertical drag scrolls scrollback with native momentum and a rubber-band at the top.
