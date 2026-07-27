@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
     paths:
       - ".github/workflows/android.yml"
       - "app/**"
@@ -14,12 +16,12 @@ on:
       - "modules/**"
       - "package-lock.json"
       - "package.json"
-      - "scripts/ci/build-android.sh"
+      - "scripts/ci/**"
       - "src/**"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-${{ github.ref }}
@@ -27,7 +29,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build debug APK
+    name: Build and publish installable APK
     runs-on:
       - self-hosted
       - Linux
@@ -38,11 +40,22 @@ jobs:
     timeout-minutes: 120
     env:
       ANDROID_IMAGE: wmux-mobile-android-ci:latest
+      ANDROID_VERSION_CODE: ${{ github.run_number }}
     steps:
       - name: Check out source
         uses: actions/checkout@v7
         with:
           clean: true
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.1
+
+      - name: Materialize the Android signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: rtk node scripts/ci/prepare-android-signing.mjs
 
       - name: Prepare persistent build caches
         run: |
@@ -56,23 +69,39 @@ jobs:
             --tag "$ANDROID_IMAGE" \
             docker/android
 
-      - name: Build the debug APK
+      - name: Build the standalone APK
+        env:
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           rtk docker run --rm \
+            --env ANDROID_KEY_ALIAS \
+            --env ANDROID_KEY_PASSWORD \
+            --env ANDROID_KEYSTORE_PASSWORD \
+            --env ANDROID_KEYSTORE_PATH=/run/secrets/wmux-mobile-release.p12 \
+            --env ANDROID_VERSION_CODE \
             --env CI=true \
+            --env EXPO_NO_TELEMETRY=1 \
             --env GRADLE_USER_HOME=/home/node/.gradle \
             --env PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
             --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace" \
             --mount "type=bind,source=$HOME/.cache/wmux-mobile-android/gradle,target=/home/node/.gradle" \
             --mount "type=bind,source=$HOME/.cache/wmux-mobile-android/npm,target=/home/node/.npm" \
+            --mount "type=bind,source=$ANDROID_KEYSTORE_PATH,target=/run/secrets/wmux-mobile-release.p12,readonly" \
+            --mount "type=bind,source=$(rtk which rtk),target=/usr/local/bin/rtk,readonly" \
             --workdir /workspace \
             "$ANDROID_IMAGE" \
             scripts/ci/build-android.sh
 
-      - name: Preserve the installable APK
-        uses: actions/upload-artifact@v7
-        with:
-          compression-level: 0
-          name: wmux-android-debug-${{ github.sha }}
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 14
+      - name: Publish the installable APK
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rtk node \
+            scripts/ci/publish-android-release.mjs \
+            android/app/build/outputs/apk/release/output-metadata.json
+
+      - name: Remove the temporary Android signing key
+        if: always()
+        run: rtk node scripts/ci/cleanup-android-signing.mjs

@@ -40,8 +40,10 @@ The native run and Metro scripts build the self-contained offline terminal host 
 
 The main CI workflow runs in a pinned Playwright Ubuntu container on the repository-scoped `homelab-wmux-mobile` self-hosted runner.
 The Android workflow uses the same runner and builds inside the pinned toolchain defined by `docker/android/Dockerfile`, so the host does not need an Android SDK installation.
-It produces an installable debug APK and retains it as a GitHub Actions artifact for 14 days.
+It produces a signed standalone APK that runs without Metro and publishes it as a GitHub prerelease.
+The newest three automated releases are retained, while deliberate `v*` releases remain permanent.
 The Docker build cache plus persistent npm and Gradle caches remain on `homelab` between jobs.
+See [docs/ANDROID_RELEASES.md](docs/ANDROID_RELEASES.md) for signing, versioning, retention, and installation details.
 
 ## TestFlight
 
