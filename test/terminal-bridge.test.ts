@@ -43,6 +43,7 @@ test("terminal bridge decodes every native-to-host command family", () => {
     { t: "paste", paneId: "pane-1", text: "two\nlines" },
     { t: "scroll", paneId: "pane-1", deltaLines: -3.5 },
     { t: "scrollToBottom", paneId: "pane-1" },
+    { t: "activateLink", paneId: "pane-1", requestId: "link-1", xPx: 10, yPx: 20 },
     { t: "selection", paneId: "pane-1", action: "start", xPx: 10, yPx: 20 },
     { t: "copySelection", paneId: "pane-1" },
     { t: "settings", settings },
@@ -60,6 +61,7 @@ test("terminal bridge rejects malformed and non-finite native input", () => {
     { t: "attach", paneId: "" },
     { t: "viewport", paneId: "pane-1", widthPx: Number.NaN, heightPx: 100, dpr: 2 },
     { t: "key", paneId: "pane-1", key: "a", code: "KeyA", ctrl: "false" },
+    { t: "activateLink", paneId: "pane-1", requestId: "", xPx: -1, yPx: 20 },
     { t: "selection", paneId: "pane-1", action: "diagonal" },
     { t: "settings", settings: { ...settings, colorScheme: "unknown" } },
   ];
@@ -85,6 +87,8 @@ test("terminal bridge validates host-to-native messages before React Native cons
       endPx: { x: 20, y: 18 },
       text: "hi",
     },
+    { t: "link", paneId: "pane-1", requestId: "link-1", url: "https://example.com/" },
+    { t: "link", paneId: "pane-1", requestId: "link-2" },
     {
       t: "media",
       paneId: "pane-1",
@@ -100,6 +104,7 @@ test("terminal bridge validates host-to-native messages before React Native cons
     assert.deepEqual(decodeToNative(encodeBridgeMessage(message)), { ok: true, value: message });
   }
   assert.equal(decodeToNative({ t: "metrics", paneId: "pane-1", cols: 0, rows: 24, cellW: 8, cellH: 16 }).ok, false);
+  assert.equal(decodeToNative({ t: "link", paneId: "pane-1", requestId: "", url: "https://example.com" }).ok, false);
 });
 
 test("terminal output bytes are absent from the low-frequency bridge contract", async () => {

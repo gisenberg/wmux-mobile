@@ -1,5 +1,5 @@
 import type { Ghostty, IDisposable, Terminal as GhosttyTerminal } from "ghostty-web";
-import { Terminal } from "ghostty-web";
+import { LinkDetector, OSC8LinkProvider, Terminal, UrlRegexProvider } from "ghostty-web";
 
 import type { PaneClientMessage, PaneServerMessage, PaneReplayKind } from "../../../protocol/wmux";
 import type { HostSettings, ToHost, ToNative } from "../bridge";
@@ -49,6 +49,7 @@ export class TerminalSession {
   private readonly onActivity: () => void;
   private readonly element: HTMLDivElement;
   private readonly terminal: GhosttyTerminal;
+  private readonly linkDetector: LinkDetector;
   private readonly keyEncoder: SemanticKeyEncoder;
   private readonly pipeline: OutputPipeline;
   private readonly disposables: IDisposable[] = [];
@@ -114,9 +115,15 @@ export class TerminalSession {
     });
     this.terminal.open(this.element);
     this.makeTerminalNonFocusable();
+    this.linkDetector = new LinkDetector(this.terminal);
+    this.linkDetector.registerProvider(new OSC8LinkProvider(this.terminal));
+    this.linkDetector.registerProvider(new UrlRegexProvider(this.terminal));
     this.keyEncoder = new SemanticKeyEncoder(options.ghostty, this.terminal);
     this.pipeline = new OutputPipeline({
-      write: (data) => this.terminal.write(data),
+      write: (data) => {
+        this.terminal.write(data);
+        this.linkDetector.invalidateCache();
+      },
       onOsc52: (text) => this.emit({ t: "osc52", paneId: this.paneId, text }),
       onAlternateScreen: (active) => this.emit({ t: "altScreen", paneId: this.paneId, active }),
       onMedia: (media) => this.emit({ t: "media", paneId: this.paneId, ...media }),
@@ -214,6 +221,10 @@ export class TerminalSession {
       this.terminal.scrollToBottom();
       return;
     }
+    if (message.t === "activateLink") {
+      void this.resolveLink(message);
+      return;
+    }
     if (message.t === "selection") {
       this.updateSelection(message);
       return;
@@ -280,6 +291,7 @@ export class TerminalSession {
     this.clearReconnectTimer();
     this.closeSocket();
     for (const disposable of this.disposables) disposable.dispose();
+    this.linkDetector.dispose();
     this.keyEncoder.dispose();
     this.terminal.dispose();
     this.element.remove();
@@ -393,6 +405,7 @@ export class TerminalSession {
     this.selectionRange = undefined;
     this.terminal.reset();
     this.terminal.clear();
+    this.linkDetector.invalidateCache();
     const chunks: string[] = [];
     for (let offset = 0; offset < replay.length; offset += REPLAY_CHUNK_CHARACTERS) {
       chunks.push(replay.slice(offset, offset + REPLAY_CHUNK_CHARACTERS));
@@ -659,6 +672,25 @@ export class TerminalSession {
     this.scheduleSelectionEmission(false);
   }
 
+  private async resolveLink(message: Extract<ToHost, { t: "activateLink" }>): Promise<void> {
+    let url: string | undefined;
+    const point = this.cellFromPixels(message.xPx, message.yPx);
+    if (point) {
+      try {
+        url = (await this.linkDetector.getLinkAt(point.x, this.absoluteBufferRow(point.y)))?.text;
+      } catch {
+        this.emit({ t: "log", level: "warn", message: "Terminal link detection failed" });
+      }
+    }
+    if (this.disposed) return;
+    this.emit({
+      t: "link",
+      paneId: this.paneId,
+      requestId: message.requestId,
+      ...(url ? { url } : {}),
+    });
+  }
+
   private cellFromPixels(xPx: number | undefined, yPx: number | undefined): CellPoint | undefined {
     if (xPx === undefined || yPx === undefined) return undefined;
     const metrics = this.terminal.renderer?.getMetrics();
@@ -682,7 +714,10 @@ export class TerminalSession {
     if (!metrics?.width || !metrics.height || width <= 0 || height <= 0) return;
     const cols = Math.max(2, Math.floor(width / metrics.width));
     const rows = Math.max(1, Math.floor(height / metrics.height));
-    if (cols !== this.terminal.cols || rows !== this.terminal.rows) this.terminal.resize(cols, rows);
+    if (cols !== this.terminal.cols || rows !== this.terminal.rows) {
+      this.terminal.resize(cols, rows);
+      this.linkDetector.invalidateCache();
+    }
   }
 
   private emitMetrics(): void {

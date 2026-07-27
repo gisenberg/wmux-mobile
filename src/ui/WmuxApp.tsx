@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   PanResponder,
   Platform,
   Pressable,
@@ -43,6 +44,7 @@ import {
   type TerminalSurfaceSession,
   type TerminalSurfaceStatus,
 } from "@/terminal/TerminalSurface";
+import type { Point } from "@/terminal/bridge";
 import { TerminalInteractionLayer } from "@/terminal/TerminalInteractionLayer";
 import {
   base64FromDataUrl,
@@ -51,6 +53,7 @@ import {
   type TerminalMetrics,
   type TerminalSelection,
 } from "@/terminal/interactions";
+import { normalizeTerminalLink } from "@/terminal/links";
 import { colors, fonts } from "@/ui/theme";
 
 const defaultEndpoint = process.env.EXPO_PUBLIC_WMUX_URL ?? "";
@@ -608,6 +611,7 @@ function TerminalTouchDiagnostics({ onFocusInput }: { onFocusInput: () => void }
             altScreen={false}
             height={layout.height}
             metrics={metrics}
+            onActivateLink={async () => false}
             onCopy={() => void copyDiagnosticText()}
             onCycleTab={(direction) => setStatus(`Tab swipe: ${direction > 0 ? "next" : "previous"}`)}
             onFocusInput={onFocusInput}
@@ -1222,6 +1226,25 @@ function LiveTerminalCard({
     setTerminalSize((current) => (current.height === height && current.width === width ? current : { height, width }));
   }, []);
 
+  const activateTerminalLink = useCallback(
+    async (point: Point): Promise<boolean> => {
+      const link = await terminalRef.current?.activateLink(paneId, point.x, point.y);
+      if (link === undefined) return false;
+      const url = normalizeTerminalLink(link);
+      if (!url) {
+        onClipboardNotice("Only HTTP and HTTPS terminal links can be opened");
+        return true;
+      }
+      try {
+        await Linking.openURL(url);
+      } catch {
+        if (mountedRef.current) setPaneIssue("Could not open the terminal link.");
+      }
+      return true;
+    },
+    [onClipboardNotice, paneId, setPaneIssue, terminalRef],
+  );
+
   return (
     <View style={styles.terminalCard}>
       <View onLayout={handleTerminalLayout} style={styles.terminalGestureSurface}>
@@ -1280,6 +1303,7 @@ function LiveTerminalCard({
           <TerminalInteractionLayer
             altScreen={altScreen}
             height={terminalSize.height}
+            onActivateLink={activateTerminalLink}
             onCopy={() => send({ t: "copySelection", paneId })}
             onCycleTab={onCycleTab}
             onFocusInput={onFocusInput}

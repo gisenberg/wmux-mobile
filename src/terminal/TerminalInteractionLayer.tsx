@@ -30,6 +30,7 @@ interface TerminalInteractionLayerProps {
   cursor?: TerminalCursor;
   height: number;
   metrics?: TerminalMetrics;
+  onActivateLink: (point: Point) => Promise<boolean>;
   onCopy: () => void;
   onCycleTab: (direction: -1 | 1) => void;
   onFocusInput: () => void;
@@ -67,6 +68,7 @@ class TerminalGestureController {
   private momentumTimer: ReturnType<typeof setInterval> | undefined;
   private scroll: ScrollAccumulator = { remainderPx: 0 };
   private selecting = false;
+  private tapActionGeneration = 0;
   private tapTracker: TapTracker | undefined;
 
   constructor(config: InteractionConfig) {
@@ -144,6 +146,7 @@ class TerminalGestureController {
   }
 
   terminate(): void {
+    this.tapActionGeneration += 1;
     this.clearLongPress();
     if (this.selecting && this.lastPoint) this.sendSelection("end", this.lastPoint);
     this.selecting = false;
@@ -151,6 +154,7 @@ class TerminalGestureController {
   }
 
   dispose(): void {
+    this.tapActionGeneration += 1;
     this.clearLongPress();
     this.stopMomentum();
     if (this.focusTimer) clearTimeout(this.focusTimer);
@@ -162,6 +166,7 @@ class TerminalGestureController {
   }
 
   private handleTap(point: Point, timeMs: number): void {
+    const actionGeneration = ++this.tapActionGeneration;
     const tracker = nextTapTracker(this.tapTracker, point, timeMs);
     this.tapTracker = tracker;
     if (this.focusTimer) clearTimeout(this.focusTimer);
@@ -177,7 +182,17 @@ class TerminalGestureController {
       this.tapTracker = undefined;
       return;
     }
-    this.focusTimer = setTimeout(this.config.onFocusInput, MULTI_TAP_DELAY_MS);
+    this.focusTimer = setTimeout(() => {
+      this.focusTimer = undefined;
+      void this.config
+        .onActivateLink(point)
+        .then((activated) => {
+          if (!activated && actionGeneration === this.tapActionGeneration) this.config.onFocusInput();
+        })
+        .catch(() => {
+          if (actionGeneration === this.tapActionGeneration) this.config.onFocusInput();
+        });
+    }, MULTI_TAP_DELAY_MS);
   }
 
   private sendSelection(action: Extract<ToHost, { t: "selection" }>["action"], point?: Point): void {

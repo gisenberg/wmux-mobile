@@ -39,6 +39,7 @@ export type ToHost =
   | { t: "paste"; paneId: string; text: string }
   | { t: "scroll"; paneId: string; deltaLines: number }
   | { t: "scrollToBottom"; paneId: string }
+  | { t: "activateLink"; paneId: string; requestId: string; xPx: number; yPx: number }
   | {
       t: "selection";
       paneId: string;
@@ -59,6 +60,7 @@ export type ToNative =
   | { t: "altScreen"; paneId: string; active: boolean }
   | { t: "cursor"; paneId: string; xPx: number; yPx: number; visible: boolean }
   | { t: "selection"; paneId: string; active: boolean; startPx?: Point; endPx?: Point; text?: string }
+  | { t: "link"; paneId: string; requestId: string; url?: string }
   | { t: "media"; paneId: string; name: string; mimeType: string; dataUrl: string }
   | { t: "exit"; paneId: string; code: number | null }
   | { t: "log"; level: "debug" | "warn" | "error"; message: string };
@@ -78,6 +80,7 @@ const toHostTypes = new Set([
   "paste",
   "scroll",
   "scrollToBottom",
+  "activateLink",
   "selection",
   "copySelection",
   "settings",
@@ -168,6 +171,23 @@ export const decodeToHost = (input: unknown): BridgeDecodeResult<ToHost> => {
     return finiteNumber(message.deltaLines)
       ? valid({ t: "scroll", paneId, deltaLines: message.deltaLines })
       : invalid("scroll deltaLines must be finite");
+  }
+  if (message.t === "activateLink") {
+    if (
+      typeof message.requestId !== "string" ||
+      !message.requestId ||
+      !nonnegativeNumber(message.xPx) ||
+      !nonnegativeNumber(message.yPx)
+    ) {
+      return invalid("activateLink message is malformed");
+    }
+    return valid({
+      t: "activateLink",
+      paneId,
+      requestId: message.requestId,
+      xPx: message.xPx,
+      yPx: message.yPx,
+    });
   }
   if (message.t === "selection") {
     if (typeof message.action !== "string" || !selectionActions.has(message.action)) {
@@ -289,6 +309,21 @@ export const decodeToNative = (input: unknown): BridgeDecodeResult<ToNative> => 
       ...(message.text === undefined ? {} : { text: message.text }),
     });
   }
+  if (message.t === "link") {
+    if (
+      typeof message.requestId !== "string" ||
+      !message.requestId ||
+      (message.url !== undefined && typeof message.url !== "string")
+    ) {
+      return invalid("link message is malformed");
+    }
+    return valid({
+      t: "link",
+      paneId,
+      requestId: message.requestId,
+      ...(message.url === undefined ? {} : { url: message.url }),
+    });
+  }
   if (message.t === "media") {
     if (
       typeof message.name !== "string" ||
@@ -352,6 +387,7 @@ const isRecord = (input: unknown): input is Record<string, unknown> =>
   typeof input === "object" && input !== null && !Array.isArray(input);
 
 const finiteNumber = (input: unknown): input is number => typeof input === "number" && Number.isFinite(input);
+const nonnegativeNumber = (input: unknown): input is number => finiteNumber(input) && input >= 0;
 const positiveNumber = (input: unknown): input is number => finiteNumber(input) && input > 0;
 const positiveInteger = (input: unknown): input is number => Number.isInteger(input) && Number(input) > 0;
 const valid = <T>(value: T): BridgeDecodeResult<T> => ({ ok: true, value });

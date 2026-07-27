@@ -36,6 +36,7 @@ interface TerminalSurfaceProps {
 }
 
 export interface TerminalSurfaceHandle {
+  activateLink(paneId: string, xPx: number, yPx: number): Promise<string | undefined>;
   send(message: ToHost): void;
 }
 
@@ -44,11 +45,18 @@ interface Viewport {
   height: number;
 }
 
+interface PendingLinkRequest {
+  resolve: (url: string | undefined) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(function TerminalSurface(
   { session, onMessage, onStatusChange, style },
   forwardedRef,
 ) {
   const webViewRef = useRef<WebView>(null);
+  const linkRequestIdRef = useRef(0);
+  const pendingLinkRequestsRef = useRef(new Map<string, PendingLinkRequest>());
   const [html, setHtml] = useState<string | null>(null);
   const [issue, setIssue] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -83,7 +91,35 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
     webViewRef.current?.postMessage(encodeBridgeMessage(message));
   }, []);
 
-  useImperativeHandle(forwardedRef, () => ({ send: post }), [post]);
+  const activateLink = useCallback(
+    (paneId: string, xPx: number, yPx: number): Promise<string | undefined> => {
+      if (!ready) return Promise.resolve(undefined);
+      linkRequestIdRef.current += 1;
+      const requestId = `link-${linkRequestIdRef.current}`;
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          pendingLinkRequestsRef.current.delete(requestId);
+          resolve(undefined);
+        }, 750);
+        pendingLinkRequestsRef.current.set(requestId, { resolve, timeout });
+        post({ t: "activateLink", paneId, requestId, xPx, yPx });
+      });
+    },
+    [post, ready],
+  );
+
+  useImperativeHandle(forwardedRef, () => ({ activateLink, send: post }), [activateLink, post]);
+
+  useEffect(
+    () => () => {
+      for (const request of pendingLinkRequestsRef.current.values()) {
+        clearTimeout(request.timeout);
+        request.resolve(undefined);
+      }
+      pendingLinkRequestsRef.current.clear();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!ready || !session) return;
@@ -123,6 +159,14 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       if (decoded.value.t === "ready") {
         setReady(true);
         setIssue(null);
+      }
+      if (decoded.value.t === "link") {
+        const request = pendingLinkRequestsRef.current.get(decoded.value.requestId);
+        if (request) {
+          clearTimeout(request.timeout);
+          pendingLinkRequestsRef.current.delete(decoded.value.requestId);
+          request.resolve(decoded.value.url);
+        }
       }
       if (decoded.value.t === "log" && decoded.value.level === "error") setIssue(decoded.value.message);
       onMessage?.(decoded.value);

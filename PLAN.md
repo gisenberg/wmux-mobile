@@ -203,6 +203,7 @@ type ToHost =
   | { t: "paste"; paneId: string; text: string }
   | { t: "scroll"; paneId: string; deltaLines: number }
   | { t: "scrollToBottom"; paneId: string }
+  | { t: "activateLink"; paneId: string; requestId: string; xPx: number; yPx: number }
   | {
       t: "selection";
       paneId: string;
@@ -234,6 +235,7 @@ type ToNative =
   | { t: "altScreen"; paneId: string; active: boolean }
   | { t: "cursor"; paneId: string; xPx: number; yPx: number; visible: boolean }
   | { t: "selection"; paneId: string; active: boolean; startPx?: Point; endPx?: Point; text?: string }
+  | { t: "link"; paneId: string; requestId: string; url?: string }
   | { t: "media"; paneId: string; name: string; mimeType: string; dataUrl: string }
   | { t: "exit"; paneId: string; code: number | null }
   | { t: "log"; level: "debug" | "warn" | "error"; message: string };
@@ -303,6 +305,8 @@ Acceptance: with the app focused and a shell attached, no predictive bar, no aut
   When `altScreen` is active, the gesture is disabled so it does not fight a full-screen TUI.
 - Vertical drag scrolls scrollback with native momentum and a rubber-band at the top.
   Pull past the bottom snaps to live.
+- A single tap resolves OSC 8 and plain web links at the touched terminal cell before falling back to keyboard focus.
+  Link navigation is performed by the native OS, while the WebView remains non-focusable.
 - Long press starts selection with a native magnifier and draggable handles, using `cursor` and `selection` messages from the host for geometry.
   Double tap selects a word, triple tap selects a line.
 - Bottom sheet replaces the desktop command palette: new tab, new workspace, split, close, host picker, settings, diagnostics.

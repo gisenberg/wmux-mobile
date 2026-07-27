@@ -227,6 +227,73 @@ test("claims PTY resize ownership without sending terminal bytes", async ({ page
   expect(inputPayloads(socket)).toEqual([""]);
 });
 
+test("resolves plain and OSC 8 terminal links at native touch coordinates", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-links";
+  await initializePane(harness, paneId, 640, 360);
+  await harness.send(
+    paneId,
+    ready(
+      paneId,
+      "raw",
+      "\x1b[2J\x1b[Hplain https://example.com/docs\r\nosc \x1b]8;;https://openai.com/docs\x07OpenAI docs\x1b]8;;\x07\r\n",
+    ),
+  );
+  await expect
+    .poll(async () =>
+      (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join("\n"),
+    )
+    .toContain("https://example.com/docs");
+  await expect
+    .poll(async () =>
+      (await harness.messages()).find((message) => message.t === "metrics" && message.paneId === paneId),
+    )
+    .toBeTruthy();
+  const metrics = (await harness.messages()).find(
+    (message): message is Extract<ToNative, { t: "metrics" }> => message.t === "metrics" && message.paneId === paneId,
+  );
+  if (!metrics) throw new Error("Terminal metrics were not emitted");
+
+  await harness.dispatch({
+    t: "activateLink",
+    paneId,
+    requestId: "plain-link",
+    xPx: 8 * metrics.cellW,
+    yPx: 0.5 * metrics.cellH,
+  });
+  await expect
+    .poll(async () =>
+      (await harness.messages()).find((message) => message.t === "link" && message.requestId === "plain-link"),
+    )
+    .toMatchObject({ t: "link", paneId, requestId: "plain-link", url: "https://example.com/docs" });
+
+  await harness.dispatch({
+    t: "activateLink",
+    paneId,
+    requestId: "osc-link",
+    xPx: 6 * metrics.cellW,
+    yPx: 1.5 * metrics.cellH,
+  });
+  await expect
+    .poll(async () =>
+      (await harness.messages()).find((message) => message.t === "link" && message.requestId === "osc-link"),
+    )
+    .toMatchObject({ t: "link", paneId, requestId: "osc-link", url: "https://openai.com/docs" });
+
+  await harness.dispatch({
+    t: "activateLink",
+    paneId,
+    requestId: "no-link",
+    xPx: 1.5 * metrics.cellW,
+    yPx: 2.5 * metrics.cellH,
+  });
+  await expect
+    .poll(async () =>
+      (await harness.messages()).find((message) => message.t === "link" && message.requestId === "no-link"),
+    )
+    .toEqual({ t: "link", paneId, requestId: "no-link" });
+});
+
 test("preserves a resize ownership claim while the pane socket connects", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-pending-resize-claim";
