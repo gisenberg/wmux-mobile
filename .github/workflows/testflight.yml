@@ -52,6 +52,15 @@ jobs:
       - name: Generate the iOS project
         run: rtk npx expo prebuild --platform ios --clean --no-install
 
+      - name: Apply the iOS release version
+        run: |
+          rtk /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleVersion $IOS_BUILD_NUMBER" \
+            ios/wmux/Info.plist
+          rtk /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleShortVersionString $IOS_MARKETING_VERSION" \
+            ios/wmux/Info.plist
+
       - name: Install CocoaPods
         run: rtk pod install --project-directory=ios --repo-update
 
@@ -76,6 +85,16 @@ jobs:
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             MARKETING_VERSION="$IOS_MARKETING_VERSION" \
             clean archive
+
+      - name: Verify the archived application version
+        run: |
+          rtk plutil \
+            -convert json \
+            -o "$RUNNER_TEMP/wmux-app-info.json" \
+            "$RUNNER_TEMP/testflight-archive.xcarchive/Products/Applications/wmux.app/Info.plist"
+          rtk node \
+            scripts/ci/verify-testflight-version.mjs \
+            "$RUNNER_TEMP/wmux-app-info.json"
 
       - name: Export the signed IPA
         run: |
