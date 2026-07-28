@@ -37,7 +37,7 @@ export type ToHost =
     }
   | { t: "text"; paneId: string; data: string }
   | { t: "paste"; paneId: string; text: string }
-  | { t: "scroll"; paneId: string; deltaLines: number }
+  | { t: "scroll"; paneId: string; deltaLines: number; xPx: number; yPx: number }
   | { t: "scrollToBottom"; paneId: string }
   | { t: "activateLink"; paneId: string; requestId: string; xPx: number; yPx: number }
   | {
@@ -58,6 +58,7 @@ export type ToNative =
   | { t: "bell"; paneId: string }
   | { t: "osc52"; paneId: string; text: string }
   | { t: "altScreen"; paneId: string; active: boolean }
+  | { t: "mouseTracking"; paneId: string; active: boolean }
   | { t: "cursor"; paneId: string; xPx: number; yPx: number; visible: boolean }
   | { t: "selection"; paneId: string; active: boolean; startPx?: Point; endPx?: Point; text?: string }
   | { t: "link"; paneId: string; requestId: string; url?: string }
@@ -168,9 +169,9 @@ export const decodeToHost = (input: unknown): BridgeDecodeResult<ToHost> => {
       : invalid("paste text must be a string");
   }
   if (message.t === "scroll") {
-    return finiteNumber(message.deltaLines)
-      ? valid({ t: "scroll", paneId, deltaLines: message.deltaLines })
-      : invalid("scroll deltaLines must be finite");
+    return finiteNumber(message.deltaLines) && nonnegativeNumber(message.xPx) && nonnegativeNumber(message.yPx)
+      ? valid({ t: "scroll", paneId, deltaLines: message.deltaLines, xPx: message.xPx, yPx: message.yPx })
+      : invalid("scroll deltaLines and coordinates must be finite");
   }
   if (message.t === "activateLink") {
     if (
@@ -279,6 +280,11 @@ export const decodeToNative = (input: unknown): BridgeDecodeResult<ToNative> => 
     return typeof message.active === "boolean"
       ? valid({ t: "altScreen", paneId, active: message.active })
       : invalid("altScreen active must be boolean");
+  }
+  if (message.t === "mouseTracking") {
+    return typeof message.active === "boolean"
+      ? valid({ t: "mouseTracking", paneId, active: message.active })
+      : invalid("mouseTracking active must be boolean");
   }
   if (message.t === "cursor") {
     if (!finiteNumber(message.xPx) || !finiteNumber(message.yPx) || typeof message.visible !== "boolean") {

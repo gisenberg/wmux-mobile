@@ -4,6 +4,7 @@ import { LinkDetector, OSC8LinkProvider, Terminal, UrlRegexProvider } from "ghos
 import type { PaneClientMessage, PaneServerMessage, PaneReplayKind } from "../../../protocol/wmux";
 import type { HostSettings, ToHost, ToNative } from "../bridge";
 import { SemanticKeyEncoder } from "./key-encoder";
+import { mouseWheelInput } from "./mouse-wheel";
 import { OutputPipeline } from "./output-pipeline";
 import { colorSchemeById } from "./vendor/wmux/color-schemes";
 
@@ -40,6 +41,8 @@ export interface TerminalSessionSnapshot {
   replayKind?: PaneReplayKind;
   lines: string[];
   selection: string;
+  scrollbackLength: number;
+  viewportOffset: number;
 }
 
 export class TerminalSession {
@@ -84,6 +87,7 @@ export class TerminalSession {
   private selectionFrame: number | undefined;
   private selectionIncludeText = false;
   private resizeClaimPending = false;
+  private mouseTracking: boolean | undefined;
 
   constructor(options: TerminalSessionOptions) {
     this.paneId = options.paneId;
@@ -123,6 +127,7 @@ export class TerminalSession {
       write: (data) => {
         this.terminal.write(data);
         this.linkDetector.invalidateCache();
+        this.emitMouseTracking();
       },
       onOsc52: (text) => this.emit({ t: "osc52", paneId: this.paneId, text }),
       onAlternateScreen: (active) => this.emit({ t: "altScreen", paneId: this.paneId, active }),
@@ -174,6 +179,7 @@ export class TerminalSession {
       this.redrawVisibleTerminal();
       this.emitMetrics();
       this.emitCursor();
+      this.emitMouseTracking(true);
       this.sendResize(true);
     });
   }
@@ -214,7 +220,9 @@ export class TerminalSession {
       return;
     }
     if (message.t === "scroll") {
-      this.terminal.scrollLines(Math.trunc(message.deltaLines));
+      const wheelInput = mouseWheelInput(this.terminal, message.deltaLines, message.xPx, message.yPx);
+      if (wheelInput) this.sendWheelInput(wheelInput);
+      else this.terminal.scrollLines(Math.trunc(message.deltaLines));
       return;
     }
     if (message.t === "scrollToBottom") {
@@ -314,6 +322,8 @@ export class TerminalSession {
       ...(this.lastReplayKind === undefined ? {} : { replayKind: this.lastReplayKind }),
       lines,
       selection: this.readSelectionText(),
+      scrollbackLength: Math.max(0, buffer.length - this.terminal.rows),
+      viewportOffset: Math.max(0, this.terminal.getViewportY()),
     };
   }
 
@@ -405,6 +415,7 @@ export class TerminalSession {
     this.selectionRange = undefined;
     this.terminal.reset();
     this.terminal.clear();
+    this.emitMouseTracking();
     this.linkDetector.invalidateCache();
     const chunks: string[] = [];
     for (let offset = 0; offset < replay.length; offset += REPLAY_CHUNK_CHARACTERS) {
@@ -584,6 +595,10 @@ export class TerminalSession {
     this.sendSocketMessage({ type: "input", data, terminalResponse: false });
   }
 
+  private sendWheelInput(data: string): void {
+    this.sendSocketMessage({ type: "input", data, terminalResponse: false });
+  }
+
   private sendTerminalResponse(data: string): void {
     if (!data) return;
     this.sendSocketMessage({ type: "input", data, terminalResponse: true });
@@ -744,6 +759,18 @@ export class TerminalSession {
       yPx: cursor.y * metrics.height,
       visible: cursor.visible,
     });
+  }
+
+  private emitMouseTracking(force = false): void {
+    let active = false;
+    try {
+      active = this.terminal.hasMouseTracking();
+    } catch {
+      // Ghostty can reject mode access while it is initializing.
+    }
+    if (!force && active === this.mouseTracking) return;
+    this.mouseTracking = active;
+    this.emit({ t: "mouseTracking", paneId: this.paneId, active });
   }
 
   private scheduleSelectionEmission(includeText: boolean): void {

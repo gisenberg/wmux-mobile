@@ -611,6 +611,7 @@ function TerminalTouchDiagnostics({ onFocusInput }: { onFocusInput: () => void }
             altScreen={false}
             height={layout.height}
             metrics={metrics}
+            mouseTracking={false}
             onActivateLink={async () => false}
             onCopy={() => void copyDiagnosticText()}
             onCycleTab={(direction) => setStatus(`Tab swipe: ${direction > 0 ? "next" : "previous"}`)}
@@ -1082,6 +1083,7 @@ function LiveTerminalCard({
 }) {
   const paneId = navigation.pane.id;
   const [altScreen, setAltScreen] = usePaneValue(paneId, false);
+  const [mouseTracking, setMouseTracking] = usePaneValue(paneId, false);
   const [clipboardBusy, setClipboardBusy] = useState(false);
   const [cursor, setCursor] = usePaneValue<TerminalCursor | undefined>(paneId, undefined);
   const [metrics, setMetrics] = usePaneValue<TerminalMetrics | undefined>(paneId, undefined);
@@ -1271,6 +1273,7 @@ function LiveTerminalCard({
               setPaneIssue(message.issue);
             }
             if (message.t === "altScreen") setAltScreen(message.active);
+            if (message.t === "mouseTracking") setMouseTracking(message.active);
             if (message.t === "metrics") {
               setMetrics({
                 cellH: message.cellH,
@@ -1307,6 +1310,7 @@ function LiveTerminalCard({
             onCopy={() => send({ t: "copySelection", paneId })}
             onCycleTab={onCycleTab}
             onFocusInput={onFocusInput}
+            mouseTracking={mouseTracking}
             onSend={send}
             paneId={paneId}
             selection={selection}

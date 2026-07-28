@@ -7,6 +7,7 @@ import {
   consumeScrollPixels,
   nextTapTracker,
   quoteStagedImagePath,
+  scrollReleaseAction,
   selectionAnchorPoint,
 } from "../src/terminal/interactions";
 
@@ -27,6 +28,12 @@ test("scroll accumulation preserves sub-cell motion and emits whole terminal lin
   assert.deepEqual(second, { deltaLines: 1, state: { remainderPx: 3 } });
   const reverse = consumeScrollPixels(second.state, -28, 20);
   assert.deepEqual(reverse, { deltaLines: -1, state: { remainderPx: -5 } });
+});
+
+test("upward fling snaps local scrollback live but keeps mouse-tracked TUIs scrolling", () => {
+  const fling = { dx: 0, dy: -100, vy: -0.5 };
+  assert.equal(scrollReleaseAction(fling, false), "scrollToBottom");
+  assert.equal(scrollReleaseAction(fling, true), "momentum");
 });
 
 test("selection geometry clamps to the terminal and reverses the dragged handle anchor", () => {

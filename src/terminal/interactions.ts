@@ -26,6 +26,8 @@ export interface ScrollAccumulator {
   remainderPx: number;
 }
 
+export type ScrollReleaseAction = "momentum" | "scrollToBottom";
+
 export const LONG_PRESS_DELAY_MS = 440;
 export const MULTI_TAP_DELAY_MS = 310;
 export const TAP_DISTANCE_PX = 26;
@@ -52,6 +54,18 @@ export const consumeScrollPixels = (
     state: { remainderPx: total - deltaLines * safeCellHeight },
   };
 };
+
+export const scrollReleaseAction = (
+  gesture: { dx: number; dy: number; vy: number },
+  mouseTracking: boolean,
+): ScrollReleaseAction =>
+  !mouseTracking &&
+  Math.abs(gesture.dy) > Math.abs(gesture.dx) &&
+  Math.abs(gesture.dy) >= 12 &&
+  gesture.dy < -84 &&
+  gesture.vy < -0.45
+    ? "scrollToBottom"
+    : "momentum";
 
 export const clampTerminalPoint = (point: Point, width: number, height: number): Point => ({
   x: Math.max(0, Math.min(point.x, Math.max(0, width))),

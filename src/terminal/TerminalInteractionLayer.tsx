@@ -16,6 +16,7 @@ import {
   clampTerminalPoint,
   consumeScrollPixels,
   nextTapTracker,
+  scrollReleaseAction,
   selectionAnchorPoint,
   type ScrollAccumulator,
   type TapTracker,
@@ -30,6 +31,7 @@ interface TerminalInteractionLayerProps {
   cursor?: TerminalCursor;
   height: number;
   metrics?: TerminalMetrics;
+  mouseTracking: boolean;
   onActivateLink: (point: Point) => Promise<boolean>;
   onCopy: () => void;
   onCycleTab: (direction: -1 | 1) => void;
@@ -63,7 +65,7 @@ const pointFromEvent = (event: GestureResponderEvent): TouchPoint => ({
 class TerminalGestureController {
   private config: InteractionConfig;
   private focusTimer: ReturnType<typeof setTimeout> | undefined;
-  private lastPoint: TouchPoint | undefined;
+  private lastPoint: Point | undefined;
   private longPressTimer: ReturnType<typeof setTimeout> | undefined;
   private momentumTimer: ReturnType<typeof setInterval> | undefined;
   private scroll: ScrollAccumulator = { remainderPx: 0 };
@@ -115,13 +117,14 @@ class TerminalGestureController {
     const result = consumeScrollPixels(this.scroll, -(point.y - previous.y), this.config.metrics?.cellH ?? 18);
     this.scroll = result.state;
     if (result.deltaLines) {
-      this.config.onSend({ t: "scroll", paneId: this.config.paneId, deltaLines: result.deltaLines });
+      this.sendScroll(result.deltaLines, point);
     }
   }
 
   release(event: GestureResponderEvent, gesture: PanResponderGestureState): void {
     this.clearLongPress();
     const point = clampTerminalPoint(pointFromEvent(event), this.config.width, this.config.height);
+    this.lastPoint = point;
     if (this.selecting) {
       this.sendSelection("end", point);
       this.selecting = false;
@@ -129,7 +132,7 @@ class TerminalGestureController {
       return;
     }
     if (Math.abs(gesture.dy) > Math.abs(gesture.dx) && Math.abs(gesture.dy) >= 12) {
-      if (gesture.dy < -84 && gesture.vy < -0.45) {
+      if (scrollReleaseAction(gesture, this.config.mouseTracking) === "scrollToBottom") {
         this.config.onSend({ t: "scrollToBottom", paneId: this.config.paneId });
       } else {
         this.startMomentum(gesture.vy);
@@ -213,7 +216,7 @@ class TerminalGestureController {
       const result = consumeScrollPixels(this.scroll, -velocityPx, this.config.metrics?.cellH ?? 18);
       this.scroll = result.state;
       if (result.deltaLines) {
-        this.config.onSend({ t: "scroll", paneId: this.config.paneId, deltaLines: result.deltaLines });
+        this.sendScroll(result.deltaLines, this.lastPoint ?? { x: 0, y: 0 });
       }
       if (Math.abs(velocityPx) < 0.7) this.stopMomentum();
     }, 16);
@@ -222,6 +225,17 @@ class TerminalGestureController {
   private stopMomentum(): void {
     if (this.momentumTimer) clearInterval(this.momentumTimer);
     this.momentumTimer = undefined;
+  }
+
+  private sendScroll(deltaLines: number, point: Point): void {
+    const terminalPoint = clampTerminalPoint(point, this.config.width, this.config.height);
+    this.config.onSend({
+      t: "scroll",
+      paneId: this.config.paneId,
+      deltaLines,
+      xPx: terminalPoint.x,
+      yPx: terminalPoint.y,
+    });
   }
 }
 
