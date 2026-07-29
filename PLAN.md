@@ -201,7 +201,7 @@ type ToHost =
   | { t: "key"; paneId: string; key: string; code: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }
   | { t: "text"; paneId: string; data: string }
   | { t: "paste"; paneId: string; text: string }
-  | { t: "scroll"; paneId: string; deltaLines: number }
+  | { t: "scroll"; paneId: string; deltaLines: number; xPx: number; yPx: number }
   | { t: "scrollToBottom"; paneId: string }
   | { t: "activateLink"; paneId: string; requestId: string; xPx: number; yPx: number }
   | {
@@ -216,6 +216,8 @@ type ToHost =
 ```
 
 `HostSettings` mirrors the relevant fields of `WmuxSettings`: `terminalFontSize`, `terminalScrollbackRows`, `colorScheme`, `tuiFrameRate`, `terminalScrollMode`.
+
+`scroll` coordinates are terminal-relative pixels identifying the touched cell; the host uses them when a mouse-tracked terminal application needs wheel input.
 
 Note that input is **semantic**, not pre-encoded.
 Native sends `{ key: "ArrowUp", ctrl: true }`; the host runs it through wmux's `terminal-input.ts` to produce VT bytes.
@@ -233,6 +235,7 @@ type ToNative =
   | { t: "bell"; paneId: string }
   | { t: "osc52"; paneId: string; text: string }
   | { t: "altScreen"; paneId: string; active: boolean }
+  | { t: "mouseTracking"; paneId: string; active: boolean }
   | { t: "cursor"; paneId: string; xPx: number; yPx: number; visible: boolean }
   | { t: "selection"; paneId: string; active: boolean; startPx?: Point; endPx?: Point; text?: string }
   | { t: "link"; paneId: string; requestId: string; url?: string }

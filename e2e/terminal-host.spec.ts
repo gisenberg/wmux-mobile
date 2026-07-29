@@ -227,6 +227,134 @@ test("claims PTY resize ownership without sending terminal bytes", async ({ page
   expect(inputPayloads(socket)).toEqual([""]);
 });
 
+test("routes native scroll as DEC wheel input only while terminal mouse tracking is active", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-mouse-wheel";
+  await initializePane(harness, paneId, 640, 360);
+  const socket = await harness.socket(paneId);
+  await expect
+    .poll(async () =>
+      (await harness.messages()).find((message) => message.t === "metrics" && message.paneId === paneId),
+    )
+    .toBeTruthy();
+  const metrics = (await harness.messages()).find(
+    (message): message is Extract<ToNative, { t: "metrics" }> => message.t === "metrics" && message.paneId === paneId,
+  );
+  if (!metrics) throw new Error("Terminal metrics were not emitted");
+  const wheelSequence = `\x1b[<64;${Math.floor(34 / metrics.cellW) + 1};${Math.floor(41 / metrics.cellH) + 1}M`;
+
+  await harness.send(paneId, ready(paneId, "raw", "\x1b[?1000h\x1b[?1006h"));
+  await harness.dispatch({ t: "scroll", paneId, deltaLines: -2, xPx: 34, yPx: 41 });
+  await expect.poll(() => inputPayloads(socket)).toContain(wheelSequence.repeat(2));
+
+  socket.received.splice(0);
+  await harness.send(paneId, { type: "output", paneId, data: "\x1b[?1006l\x1b[?1000l" });
+  await harness.dispatch({ t: "scroll", paneId, deltaLines: 2, xPx: 34, yPx: 41 });
+  await page.waitForTimeout(50);
+  expect(inputPayloads(socket)).toEqual([]);
+});
+
+test("clears native mouse tracking state when replay reset has no tracking mode", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-replay-mouse-tracking";
+  await initializePane(harness, paneId, 640, 360);
+  await harness.send(paneId, ready(paneId, "raw", "\x1b[?1000h\x1b[?1006h"));
+  await expect
+    .poll(async () =>
+      (await harness.messages()).findLast((message) => message.t === "mouseTracking" && message.paneId === paneId),
+    )
+    .toMatchObject({ active: true });
+
+  await harness.send(paneId, ready(paneId, "checkpoint", ""));
+  await expect
+    .poll(async () =>
+      (await harness.messages()).findLast((message) => message.t === "mouseTracking" && message.paneId === paneId),
+    )
+    .toMatchObject({ active: false });
+});
+
+test("re-emits mouse tracking when a pooled pane becomes visible again", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneA = "pane-tracked";
+  const paneB = "pane-background";
+  await initializePane(harness, paneA, 640, 360);
+  const socketA = await harness.socket(paneA);
+  await harness.send(paneA, ready(paneA, "raw", "\x1b[?1000h\x1b[?1006h"));
+  await expect
+    .poll(async () =>
+      (await harness.messages()).findLast((message) => message.t === "mouseTracking" && message.paneId === paneA),
+    )
+    .toMatchObject({ active: true });
+  const priorTrackingMessages = (await harness.messages()).filter(
+    (message) => message.t === "mouseTracking" && message.paneId === paneA,
+  ).length;
+
+  await harness.dispatch({ t: "attach", paneId: paneB });
+  await harness.dispatch({ t: "show", paneId: paneB });
+  await harness.dispatch({ t: "viewport", paneId: paneB, widthPx: 640, heightPx: 360, dpr: 1 });
+  await harness.socket(paneB);
+  await harness.dispatch({ t: "show", paneId: paneA });
+  await expect
+    .poll(
+      async () =>
+        (await harness.messages()).filter((message) => message.t === "mouseTracking" && message.paneId === paneA)
+          .length,
+    )
+    .toBeGreaterThan(priorTrackingMessages);
+  expect(
+    (await harness.messages()).findLast((message) => message.t === "mouseTracking" && message.paneId === paneA),
+  ).toMatchObject({ active: true });
+
+  socketA.received.splice(0);
+  await harness.dispatch({ t: "scroll", paneId: paneA, deltaLines: -1, xPx: 34, yPx: 41 });
+  await expect.poll(() => inputPayloads(socketA).length).toBe(1);
+});
+
+test("scrolls local Ghostty scrollback without pane input when mouse tracking is disabled", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-local-scrollback";
+  await initializePane(harness, paneId, 640, 360);
+  const socket = await harness.socket(paneId);
+  const history = Array.from({ length: 80 }, (_, index) => `line ${index}\r\n`).join("");
+
+  await harness.send(paneId, ready(paneId, "raw", history));
+  await expect
+    .poll(
+      async () => (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.scrollbackLength,
+    )
+    .toBeGreaterThan(0);
+  expect(inputPayloads(socket)).toEqual([]);
+
+  await harness.dispatch({ t: "scroll", paneId, deltaLines: -3, xPx: 34, yPx: 41 });
+  await expect
+    .poll(async () => (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.viewportOffset)
+    .toBeGreaterThan(0);
+  expect(inputPayloads(socket)).toEqual([]);
+
+  const localViewportOffset = (await harness.snapshot()).sessions.find(
+    (session) => session.paneId === paneId,
+  )?.viewportOffset;
+  if (!localViewportOffset) throw new Error("Local scroll did not move the viewport");
+  await harness.send(paneId, { type: "output", paneId, data: "\x1b[?1000h\x1b[?1006h" });
+  await expect
+    .poll(async () =>
+      (await harness.messages()).findLast((message) => message.t === "mouseTracking" && message.paneId === paneId),
+    )
+    .toMatchObject({ active: true });
+  await harness.dispatch({ t: "scroll", paneId, deltaLines: -1, xPx: 34, yPx: 41 });
+  await expect.poll(() => inputPayloads(socket).length).toBe(1);
+  expect((await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.viewportOffset).toBe(
+    localViewportOffset,
+  );
+
+  socket.received.splice(0);
+  await harness.dispatch({ t: "scrollToBottom", paneId });
+  await expect
+    .poll(async () => (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.viewportOffset)
+    .toBe(0);
+  expect(inputPayloads(socket)).toEqual([]);
+});
+
 test("resolves plain and OSC 8 terminal links at native touch coordinates", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-links";
