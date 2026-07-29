@@ -27,6 +27,16 @@ const themes: Record<TerminalColorSchemeId, ChromeTheme> = {
     panel: "#11151a",
     text: "#f4f6f8",
   },
+  flock: {
+    accent: "#5b8cff",
+    accentDim: "#17223b",
+    canvas: "#08090b",
+    faint: "#555a64",
+    line: "#272a31",
+    muted: "#8a8e98",
+    panel: "#121419",
+    text: "#f1f2f5",
+  },
   "catppuccin-mocha": {
     accent: "#cba6f7",
     accentDim: "#29243a",

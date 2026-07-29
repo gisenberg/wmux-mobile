@@ -38,7 +38,7 @@ The goal is a native app that is materially better than the mobile web app on ex
 ## 3. What the app talks to
 
 wmux exposes a clean, well-separated contract that a native client can consume unchanged.
-The canonical definitions live in `../wmux/src/shared/protocol.ts`.
+The canonical definitions live in `../wmux/src/shared/protocol.ts` and its shared type-only imports.
 
 | Surface                                                                                  | Purpose                                                                                                                  |
 | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -46,8 +46,8 @@ The canonical definitions live in `../wmux/src/shared/protocol.ts`.
 | `POST /api/login`                                                                        | Username and password exchange for a bearer token                                                                        |
 | `GET /api/auth-info`                                                                     | Whether auth and password login are enabled                                                                              |
 | REST `/api/workspaces`, `/api/tabs`, `/api/panes`, `/api/settings`, `/api/notifications` | Mutations, each returning updated state                                                                                  |
-| `WS /ws/events`                                                                          | `EventServerMessage`: `snapshot`, `health`, `notification`, `media`, `clipboard`                                         |
-| `WS /ws/panes/:paneId`                                                                   | `PaneClientMessage` in, `PaneServerMessage` out: `ready` with replay, `output`, `title`, `exit`, `removed`               |
+| `WS /ws/events`                                                                          | `EventServerMessage`: `snapshot`, `delta`, `health`, `notification`, `media`, `clipboard`                                |
+| `WS /ws/panes/:paneId`                                                                   | `PaneClientMessage` in, `PaneServerMessage` out: `starting`, `ready` with replay, `output`, `title`, `exit`, `removed`   |
 
 Authentication is a bearer token in the `authorization` header for REST, and a `?token=` query parameter for WebSockets, because WebSockets cannot send headers.
 
@@ -172,8 +172,8 @@ wmux-mobile/
 
 The mobile app must not drift from the server contract.
 
-1. `../wmux/src/shared/protocol.ts` remains the single source of truth.
-2. `scripts/sync-protocol.mjs` copies it into `protocol/` with a generated header and records the source commit SHA in `protocol/SOURCE`.
+1. `../wmux/src/shared/protocol.ts` and its shared type-only imports remain the single source of truth.
+2. `scripts/sync-protocol.mjs` copies the complete type boundary into `protocol/` with generated headers and records the source commit SHA in `protocol/SOURCE`.
 3. CI fails if the vendored copy differs from the pinned wmux commit, and a scheduled job opens an issue when wmux `main` moves ahead.
 4. Add a `PROTOCOL_VERSION` integer constant to wmux's shared protocol and serve it from a new `GET /api/protocol`.
    The app checks it at connect time and shows an explicit "update required" screen on mismatch rather than failing in confusing ways.

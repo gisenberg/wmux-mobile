@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { BootstrapPayload, TerminalNotification } from "../protocol/wmux";
+import type { BootstrapPayload, EventStateDelta, TerminalNotification, WmuxSettings } from "../protocol/wmux";
 import {
   ProtocolMismatchError,
   WmuxApiClient,
@@ -10,26 +10,49 @@ import {
   type FetchLike,
 } from "../src/api/client";
 import { reconnectDelay } from "../src/events/event-stream";
-import { applyEventMessage } from "../src/state/bootstrap";
+import {
+  applyEventMessage,
+  bootstrapSatisfiesEventDelta,
+  bootstrapSatisfiesHealthDelta,
+  eventDeltaRequiresResync,
+  healthDeltaRequiresResync,
+} from "../src/state/bootstrap";
+
+const settings: WmuxSettings = {
+  collapsedWorkspaceIds: [],
+  colorScheme: "wmux",
+  favoriteWorkspaceIds: [],
+  inactiveTabStreaming: "suspend",
+  machineAliases: {},
+  terminalFontSize: 14,
+  terminalScrollMode: "batched",
+  terminalScrollbackRows: 5_000,
+  tuiFrameRate: 30,
+};
 
 const bootstrap = (revision = 1): BootstrapPayload => ({
   activeWorkspaceId: "",
   agentEvents: [],
+  agentTimelines: [],
+  delegation: {
+    notificationBudgetSeconds: { running: 7_200, waiting: 300 },
+    preferHeadless: false,
+    waitTimeoutBoundsSeconds: { max: 14_400, min: 0.1 },
+    waitTimeoutSeconds: { change: 7_200, deploy: 7_200, review: 1_800 },
+  },
+  delegations: [],
+  eventRevision: 1,
   healthEpoch: 1,
+  keybindings: {} as BootstrapPayload["keybindings"],
   machines: [],
   notifications: [],
   revision,
   runs: [],
-  settings: {
-    colorScheme: "wmux",
-    inactiveTabStreaming: "suspend",
-    machineAliases: {},
-    terminalFontSize: 14,
-    terminalScrollMode: "batched",
-    terminalScrollbackRows: 5_000,
-    tuiFrameRate: 30,
-  },
+  settings,
+  settingsDefaults: settings,
   streams: [],
+  terminalFontFamily: '"Fira Code", monospace',
+  workspaceTreeRevision: 1,
   workspaces: [],
 });
 
@@ -237,19 +260,28 @@ test("reconnect backoff is bounded and deterministic with injected jitter", () =
   assert.equal(reconnectDelay(-5, 0), 600);
 });
 
-test("event reducers replace snapshots, merge health, and de-duplicate notifications", () => {
+test("event reducers apply compatible health, replace current snapshots, and de-duplicate notifications", () => {
   const initial = {
     ...bootstrap(2),
     notifications: [notification("n-1", "Old")],
   };
-  const health = applyEventMessage(initial, {
+  const futureHealth = {
     healthEpoch: 4,
     revision: 3,
     streams: [],
     type: "health",
+  } as const;
+  assert.equal(healthDeltaRequiresResync(initial, futureHealth), true);
+  assert.equal(applyEventMessage(initial, futureHealth), initial);
+
+  const health = applyEventMessage(initial, {
+    healthEpoch: 4,
+    revision: 2,
+    streams: [],
+    type: "health",
   });
   assert.equal(health.healthEpoch, 4);
-  assert.equal(health.revision, 3);
+  assert.equal(health.revision, 2);
   assert.equal(health.machines, initial.machines);
 
   const notified = applyEventMessage(health, {
@@ -268,5 +300,110 @@ test("event reducers replace snapshots, merge health, and de-duplicate notificat
       type: "snapshot",
     }),
     replacement,
+  );
+});
+
+test("event reducers apply sequential collection deltas without replacing unrelated state", () => {
+  const initial = {
+    ...bootstrap(2),
+    eventRevision: 4,
+    notifications: [notification("n-1", "Old")],
+  };
+  const message = {
+    baseEventRevision: 4,
+    eventRevision: 5,
+    healthEpoch: 1,
+    notifications: {
+      order: ["n-2"],
+      removedIds: ["n-1"],
+      upserted: [notification("n-2", "New")],
+    },
+    revision: 3,
+    type: "delta",
+  } satisfies EventStateDelta;
+
+  const updated = applyEventMessage(initial, message);
+
+  assert.equal(updated.eventRevision, 5);
+  assert.equal(updated.revision, 3);
+  assert.deepEqual(updated.notifications, [notification("n-2", "New")]);
+  assert.equal(updated.workspaces, initial.workspaces);
+  assert.equal(updated.settings, initial.settings);
+});
+
+test("event revision gaps and newer health epochs require a bootstrap resync", () => {
+  const initial = { ...bootstrap(), eventRevision: 7, healthEpoch: 3 };
+  const gap = {
+    baseEventRevision: 8,
+    eventRevision: 9,
+    healthEpoch: 3,
+    revision: 2,
+    type: "delta",
+  } satisfies EventStateDelta;
+
+  assert.equal(eventDeltaRequiresResync(initial, gap), true);
+  assert.equal(
+    eventDeltaRequiresResync(initial, {
+      ...gap,
+      baseEventRevision: 7,
+      eventRevision: 8,
+    }),
+    false,
+  );
+  assert.equal(
+    eventDeltaRequiresResync(initial, {
+      ...gap,
+      baseEventRevision: 5,
+      eventRevision: 6,
+    }),
+    false,
+  );
+  assert.equal(
+    eventDeltaRequiresResync(initial, {
+      ...gap,
+      baseEventRevision: 7,
+      eventRevision: 8,
+      healthEpoch: 4,
+    }),
+    true,
+  );
+  assert.equal(bootstrapSatisfiesEventDelta(gap, { eventRevision: 8, healthEpoch: 3 }), false);
+  assert.equal(bootstrapSatisfiesEventDelta(gap, { eventRevision: 9, healthEpoch: 3 }), true);
+  assert.equal(bootstrapSatisfiesEventDelta(gap, { eventRevision: 0, healthEpoch: 4 }), true);
+  assert.equal(bootstrapSatisfiesHealthDelta({ healthEpoch: 4, revision: 8 }, { healthEpoch: 3, revision: 8 }), false);
+  assert.equal(bootstrapSatisfiesHealthDelta({ healthEpoch: 4, revision: 8 }, { healthEpoch: 1, revision: 9 }), true);
+});
+
+test("older state deltas advance event ordering without regressing newer HTTP state", () => {
+  const initial = { ...bootstrap(9), eventRevision: 4 };
+  const updated = applyEventMessage(initial, {
+    baseEventRevision: 4,
+    eventRevision: 5,
+    healthEpoch: 1,
+    notifications: {
+      removedIds: [],
+      upserted: [notification("n-1")],
+    },
+    revision: 8,
+    type: "delta",
+  });
+
+  assert.equal(updated.eventRevision, 5);
+  assert.equal(updated.revision, 9);
+  assert.equal(updated.notifications, initial.notifications);
+});
+
+test("older snapshots cannot regress newer state", () => {
+  const initial = { ...bootstrap(9), eventRevision: 7, healthEpoch: 3 };
+  const stale = { ...bootstrap(8), eventRevision: 9, healthEpoch: 4 };
+
+  assert.equal(
+    applyEventMessage(initial, {
+      reason: "resync",
+      revision: stale.revision,
+      state: stale,
+      type: "snapshot",
+    }),
+    initial,
   );
 });

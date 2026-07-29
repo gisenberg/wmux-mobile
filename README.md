@@ -129,7 +129,7 @@ An advertised version mismatch is treated as a blocking compatibility error.
 
 ## Vendored contracts
 
-The server contract is generated from `../wmux/src/shared/protocol.ts`:
+The server contract is generated from `../wmux/src/shared/protocol.ts` and its shared type-only imports:
 
 ```sh
 npm run sync:protocol

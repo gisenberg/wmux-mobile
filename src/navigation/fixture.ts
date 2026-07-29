@@ -57,10 +57,32 @@ const workspaces = [
   ]),
 ];
 
+const fixtureSettings: BootstrapPayload["settings"] = {
+  collapsedWorkspaceIds: [],
+  colorScheme: "wmux",
+  favoriteWorkspaceIds: [],
+  inactiveTabStreaming: "suspend",
+  machineAliases: {},
+  terminalFontSize: 14,
+  terminalScrollMode: "batched",
+  terminalScrollbackRows: 5_000,
+  tuiFrameRate: 30,
+};
+
 export const navigationFixture: BootstrapPayload = {
   activeWorkspaceId: "workspace-project",
   agentEvents: [],
+  agentTimelines: [],
+  delegation: {
+    notificationBudgetSeconds: { running: 7_200, waiting: 300 },
+    preferHeadless: false,
+    waitTimeoutBoundsSeconds: { max: 14_400, min: 0.1 },
+    waitTimeoutSeconds: { change: 7_200, deploy: 7_200, review: 1_800 },
+  },
+  delegations: [],
+  eventRevision: 0,
   healthEpoch: 1,
+  keybindings: {} as BootstrapPayload["keybindings"],
   machines: [
     {
       checkedAt: createdAt,
@@ -84,15 +106,10 @@ export const navigationFixture: BootstrapPayload = {
   notifications: [],
   revision: 7,
   runs: [],
-  settings: {
-    colorScheme: "wmux",
-    inactiveTabStreaming: "suspend",
-    machineAliases: {},
-    terminalFontSize: 14,
-    terminalScrollMode: "batched",
-    terminalScrollbackRows: 5_000,
-    tuiFrameRate: 30,
-  },
+  settings: fixtureSettings,
+  settingsDefaults: { ...fixtureSettings },
   streams: [],
+  terminalFontFamily: '"Fira Code", monospace',
+  workspaceTreeRevision: 0,
   workspaces,
 };

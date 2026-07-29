@@ -361,6 +361,10 @@ export class TerminalSession {
   }
 
   private handleSocketMessage(message: PaneServerMessage): void {
+    if (message.type === "starting") {
+      this.emit({ t: "pane", paneId: this.paneId, state: "connecting", issue: message.label });
+      return;
+    }
     if (message.type === "ready") {
       this.exited = false;
       this.lastReplayKind = message.replayKind;
@@ -878,8 +882,26 @@ const decodePaneServerMessage = (value: string, paneId: string): PaneServerMessa
     return null;
   }
   if (!record(parsed) || typeof parsed.type !== "string" || parsed.paneId !== paneId) return null;
+  if (
+    parsed.type === "starting" &&
+    typeof parsed.phase === "string" &&
+    paneStartupPhases.has(parsed.phase) &&
+    typeof parsed.label === "string"
+  ) {
+    return {
+      type: "starting",
+      paneId,
+      phase: parsed.phase as Extract<PaneServerMessage, { type: "starting" }>["phase"],
+      label: parsed.label,
+    };
+  }
   if (parsed.type === "output" && typeof parsed.data === "string") {
-    return { type: "output", paneId, data: parsed.data };
+    return {
+      type: "output",
+      paneId,
+      data: parsed.data,
+      ...(Number.isInteger(parsed.inputSequence) ? { inputSequence: parsed.inputSequence as number } : {}),
+    };
   }
   if (parsed.type === "title" && typeof parsed.title === "string") {
     return { type: "title", paneId, title: parsed.title };
@@ -914,6 +936,15 @@ const decodePaneServerMessage = (value: string, paneId: string): PaneServerMessa
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const paneStartupPhases = new Set([
+  "connecting",
+  "checking-agent",
+  "staging-helpers",
+  "starting-generation",
+  "creating-session",
+  "replaying",
+]);
 
 const shouldWaitForDurableRefresh = (message: Extract<PaneServerMessage, { type: "ready" }>): boolean =>
   message.waitForRefresh === true && message.replayKind === "raw" && message.replay === "";
