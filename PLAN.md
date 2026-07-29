@@ -201,7 +201,7 @@ type ToHost =
   | { t: "key"; paneId: string; key: string; code: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }
   | { t: "text"; paneId: string; data: string }
   | { t: "paste"; paneId: string; text: string }
-   | { t: "scroll"; paneId: string; deltaLines: number; xPx: number; yPx: number }
+  | { t: "scroll"; paneId: string; deltaLines: number; xPx: number; yPx: number }
   | { t: "scrollToBottom"; paneId: string }
   | { t: "activateLink"; paneId: string; requestId: string; xPx: number; yPx: number }
   | {
@@ -233,9 +233,9 @@ type ToNative =
   | { t: "metrics"; paneId: string; cols: number; rows: number; cellW: number; cellH: number }
   | { t: "title"; paneId: string; title: string }
   | { t: "bell"; paneId: string }
-   | { t: "osc52"; paneId: string; text: string }
-   | { t: "altScreen"; paneId: string; active: boolean }
-   | { t: "mouseTracking"; paneId: string; active: boolean }
+  | { t: "osc52"; paneId: string; text: string }
+  | { t: "altScreen"; paneId: string; active: boolean }
+  | { t: "mouseTracking"; paneId: string; active: boolean }
   | { t: "cursor"; paneId: string; xPx: number; yPx: number; visible: boolean }
   | { t: "selection"; paneId: string; active: boolean; startPx?: Point; endPx?: Point; text?: string }
   | { t: "link"; paneId: string; requestId: string; url?: string }

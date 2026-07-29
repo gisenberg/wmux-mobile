@@ -15,9 +15,11 @@ export const mouseWheelInput = (
   yPx: number,
 ): string | undefined => {
   if (!hasMouseTracking(terminal) || !Number.isFinite(deltaLines) || deltaLines === 0) return undefined;
-  const { col, row } = mouseCell(terminal, xPx, yPx, supportsUtf8Coordinates(terminal));
+  const sgrMouse = supportsSgrMouse(terminal);
+  const extendedCoordinates = sgrMouse || supportsUtf8Coordinates(terminal);
+  const { col, row } = mouseCell(terminal, xPx, yPx, extendedCoordinates);
   const button = deltaLines < 0 ? 64 : 65;
-  const sequence = supportsSgrMouse(terminal)
+  const sequence = sgrMouse
     ? `\x1b[<${button};${col};${row}M`
     : `\x1b[M${String.fromCharCode(32 + button)}${String.fromCharCode(32 + col)}${String.fromCharCode(32 + row)}`;
   return sequence.repeat(Math.min(MAX_WHEEL_EVENTS, Math.max(1, Math.round(Math.abs(deltaLines)))));
@@ -51,12 +53,12 @@ const mouseCell = (
   terminal: MouseWheelTerminal,
   xPx: number,
   yPx: number,
-  supportsUtf8: boolean,
+  extendedCoordinates: boolean,
 ): { col: number; row: number } => {
   const metrics = terminal.renderer?.getMetrics();
   const width = metrics?.width ?? 8;
   const height = metrics?.height ?? 16;
-  const maximum = supportsUtf8 ? Number.MAX_SAFE_INTEGER : 95;
+  const maximum = extendedCoordinates ? Number.MAX_SAFE_INTEGER : 95;
   return {
     col: clamp(Math.floor(xPx / width) + 1, 1, Math.min(maximum, Math.max(1, terminal.cols))),
     row: clamp(Math.floor(yPx / height) + 1, 1, Math.min(maximum, Math.max(1, terminal.rows))),
