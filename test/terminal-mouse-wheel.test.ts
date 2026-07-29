@@ -14,6 +14,9 @@ const terminal = (tracking: boolean, sgr: boolean, utf8 = false, cols = 80, rows
 test("mouse wheel input maps direction, touch cells, and bounded repeats", () => {
   assert.equal(mouseWheelInput(terminal(true, true), -2.2, 34, 41), "\x1b[<64;4;3M".repeat(2));
   assert.equal(mouseWheelInput(terminal(true, true), 99, 999, 999), "\x1b[<65;80;24M".repeat(5));
+});
+
+test("SGR mouse coordinates are not constrained by the legacy encoding limit", () => {
   assert.equal(mouseWheelInput(terminal(true, true, false, 200, 200), 1, 1_990, 3_990), "\x1b[<65;200;200M");
 });
 
