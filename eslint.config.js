@@ -9,6 +9,7 @@ module.exports = defineConfig([
     "dist/**",
     "ios/**",
     "node_modules/**",
+    "protocol/keybindings.d.ts",
     "protocol/wmux.ts",
     "src/terminal/host/vendor/**",
     "test-results/**",

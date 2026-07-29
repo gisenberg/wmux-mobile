@@ -16,6 +16,7 @@ const isEventServerMessage = (value: unknown): value is EventServerMessage => {
   return (
     type === "ready" ||
     type === "snapshot" ||
+    type === "delta" ||
     type === "health" ||
     type === "notification" ||
     type === "media" ||

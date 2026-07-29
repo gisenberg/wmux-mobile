@@ -1,7 +1,7 @@
 import { AppState } from "react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { BootstrapPayload, EventServerMessage, TerminalClipboard } from "../../protocol/wmux";
+import type { BootstrapPayload, EventServerMessage, EventStateDelta, TerminalClipboard } from "../../protocol/wmux";
 
 import {
   ProtocolMismatchError,
@@ -19,7 +19,14 @@ import {
   storeSession,
 } from "@/auth/secure-connection";
 import { EventStream, type EventStreamStatus } from "@/events/event-stream";
-import { applyEventMessage } from "@/state/bootstrap";
+import {
+  applyEventMessage,
+  bootstrapSatisfiesEventDelta,
+  bootstrapSatisfiesHealthDelta,
+  eventDeltaRequiresResync,
+  healthDeltaRequiresResync,
+  isIncomingBootstrapStale,
+} from "@/state/bootstrap";
 
 export type ConnectionPhase =
   | "restoring"
@@ -78,11 +85,14 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
   const endpointRef = useRef("");
   const eventStreamRef = useRef<EventStream | null>(null);
   const mountedRef = useRef(true);
+  const pendingEventResyncRef = useRef<Pick<EventStateDelta, "eventRevision" | "healthEpoch"> | null>(null);
+  const pendingHealthResyncRef = useRef<Pick<BootstrapPayload, "revision" | "healthEpoch"> | null>(null);
   const refreshInFlightRef = useRef(false);
   const runIdRef = useRef(0);
   const tokenRef = useRef<string | undefined>(undefined);
 
   const commitBootstrap = useCallback((next: BootstrapPayload): void => {
+    if (isIncomingBootstrapStale(bootstrapRef.current, next)) return;
     bootstrapRef.current = next;
     if (mountedRef.current) setBootstrapState(next);
   }, []);
@@ -110,6 +120,15 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
         if (delay) await wait(delay);
         try {
           const next = await client.bootstrap();
+          if (
+            !bootstrapSatisfiesEventDelta(pendingEventResyncRef.current, next) ||
+            !bootstrapSatisfiesHealthDelta(pendingHealthResyncRef.current, next)
+          ) {
+            latestError = new Error("wmux returned a stale bootstrap snapshot.");
+            continue;
+          }
+          pendingEventResyncRef.current = null;
+          pendingHealthResyncRef.current = null;
           commitBootstrap(next);
           if (mountedRef.current) {
             setError(null);
@@ -167,6 +186,40 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
       }
       const current = bootstrapRef.current;
       if (!current) return;
+      if (message.type === "delta" && eventDeltaRequiresResync(current, message)) {
+        const pending = pendingEventResyncRef.current;
+        if (
+          !pending ||
+          message.healthEpoch > pending.healthEpoch ||
+          (message.healthEpoch === pending.healthEpoch && message.eventRevision > pending.eventRevision)
+        ) {
+          pendingEventResyncRef.current = message;
+        }
+        void refreshBootstrap();
+        return;
+      }
+      if (message.type === "health" && healthDeltaRequiresResync(current, message)) {
+        const pending = pendingHealthResyncRef.current;
+        if (
+          !pending ||
+          message.revision > pending.revision ||
+          (message.revision === pending.revision && message.healthEpoch > pending.healthEpoch)
+        ) {
+          pendingHealthResyncRef.current = message;
+        }
+        void refreshBootstrap();
+        return;
+      }
+      if (message.type === "snapshot") {
+        if (
+          !bootstrapSatisfiesEventDelta(pendingEventResyncRef.current, message.state) ||
+          !bootstrapSatisfiesHealthDelta(pendingHealthResyncRef.current, message.state)
+        ) {
+          return;
+        }
+        pendingEventResyncRef.current = null;
+        pendingHealthResyncRef.current = null;
+      }
       commitBootstrap(applyEventMessage(current, message));
     },
     [commitBootstrap, refreshBootstrap],
@@ -254,6 +307,8 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
       eventStreamRef.current?.stop();
       eventStreamRef.current = null;
       bootstrapRef.current = null;
+      pendingEventResyncRef.current = null;
+      pendingHealthResyncRef.current = null;
       setBootstrapState(null);
       setProtocolStatus(null);
       setError(null);
@@ -335,6 +390,8 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
     eventStreamRef.current = null;
     apiRef.current = null;
     bootstrapRef.current = null;
+    pendingEventResyncRef.current = null;
+    pendingHealthResyncRef.current = null;
     tokenRef.current = undefined;
     setTerminalAccessToken(undefined);
     setBootstrapState(null);

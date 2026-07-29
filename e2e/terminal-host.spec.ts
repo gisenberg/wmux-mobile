@@ -121,6 +121,12 @@ test("loads bundled terminal fonts before accepting sessions", async ({ page }) 
 test("owns pane sockets and preserves raw and checkpoint replay ordering", async ({ page }) => {
   const harness = await openHarness(page);
   await initializePane(harness, "pane-raw", 640, 360);
+  await harness.send("pane-raw", {
+    type: "starting",
+    paneId: "pane-raw",
+    phase: "replaying",
+    label: "Restoring terminal…",
+  });
   await harness.send("pane-raw", ready("pane-raw", "raw", "\x1b[2J\x1b[Hraw replay\r\n"));
   await expect
     .poll(async () =>
