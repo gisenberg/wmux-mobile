@@ -428,6 +428,63 @@ test("resolves plain and OSC 8 terminal links at native touch coordinates", asyn
     .toEqual({ t: "link", paneId, requestId: "no-link" });
 });
 
+test("resolves a plain terminal link across a soft-wrapped row", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-wrapped-link";
+  await initializePane(harness, paneId, 640, 360);
+  const metrics = (await harness.messages()).find(
+    (message): message is Extract<ToNative, { t: "metrics" }> => message.t === "metrics" && message.paneId === paneId,
+  );
+  if (!metrics) throw new Error("Terminal metrics were not emitted");
+
+  const url = "https://login.tailscale.com/a/1164725fb32546d";
+  const prefix = `${"#".repeat(Math.max(0, metrics.cols - 12))} `;
+  await harness.send(paneId, ready(paneId, "raw", `\x1b[2J\x1b[H${prefix}${url}`));
+  await expect
+    .poll(async () =>
+      (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join("\n"),
+    )
+    .toContain("1164725fb32546d");
+
+  await harness.dispatch({
+    t: "activateLink",
+    paneId,
+    requestId: "wrapped-link-start",
+    xPx: (metrics.cols - 5.5) * metrics.cellW,
+    yPx: 0.5 * metrics.cellH,
+  });
+  await expect
+    .poll(async () =>
+      (await harness.messages()).find((message) => message.t === "link" && message.requestId === "wrapped-link-start"),
+    )
+    .toMatchObject({
+      paneId,
+      requestId: "wrapped-link-start",
+      t: "link",
+      url,
+    });
+
+  await harness.dispatch({
+    t: "activateLink",
+    paneId,
+    requestId: "wrapped-link-continuation",
+    xPx: 5.5 * metrics.cellW,
+    yPx: 1.5 * metrics.cellH,
+  });
+  await expect
+    .poll(async () =>
+      (await harness.messages()).find(
+        (message) => message.t === "link" && message.requestId === "wrapped-link-continuation",
+      ),
+    )
+    .toMatchObject({
+      paneId,
+      requestId: "wrapped-link-continuation",
+      t: "link",
+      url,
+    });
+});
+
 test("preserves a resize ownership claim while the pane socket connects", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-pending-resize-claim";

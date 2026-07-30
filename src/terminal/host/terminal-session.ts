@@ -1,5 +1,5 @@
 import type { Ghostty, IDisposable, Terminal as GhosttyTerminal } from "ghostty-web";
-import { LinkDetector, OSC8LinkProvider, Terminal, UrlRegexProvider } from "ghostty-web";
+import { LinkDetector, OSC8LinkProvider, Terminal } from "ghostty-web";
 
 import type { PaneClientMessage, PaneServerMessage, PaneReplayKind } from "../../../protocol/wmux";
 import type { HostSettings, ToHost, ToNative } from "../bridge";
@@ -7,6 +7,7 @@ import { SemanticKeyEncoder } from "./key-encoder";
 import { mouseWheelInput } from "./mouse-wheel";
 import { OutputPipeline } from "./output-pipeline";
 import { colorSchemeById } from "./vendor/wmux/color-schemes";
+import { WrappedUrlProvider } from "./wrapped-url-provider";
 
 const REPLAY_CHUNK_CHARACTERS = 128 * 1024;
 const RECONNECT_MAX_MS = 8_000;
@@ -121,7 +122,7 @@ export class TerminalSession {
     this.makeTerminalNonFocusable();
     this.linkDetector = new LinkDetector(this.terminal);
     this.linkDetector.registerProvider(new OSC8LinkProvider(this.terminal));
-    this.linkDetector.registerProvider(new UrlRegexProvider(this.terminal));
+    this.linkDetector.registerProvider(new WrappedUrlProvider(this.terminal));
     this.keyEncoder = new SemanticKeyEncoder(options.ghostty, this.terminal);
     this.pipeline = new OutputPipeline({
       write: (data) => {
