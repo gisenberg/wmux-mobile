@@ -16,6 +16,7 @@ const DURABLE_REFRESH_FIRST_NUDGE_MS = 120;
 const DURABLE_REFRESH_QUIET_MS = 80;
 const DURABLE_REFRESH_FALLBACK_MS = 700;
 const EMPTY_REPLAY_REPAINT_MS = 700;
+const VIEWPORT_RESIZE_SETTLE_MS = 50;
 const REPAINT_INPUT = "\x0c";
 
 interface TerminalSessionOptions {
@@ -65,6 +66,7 @@ export class TerminalSession {
   private token: string;
   private socket: WebSocket | null = null;
   private reconnectTimer: number | undefined;
+  private viewportResizeTimer: number | undefined;
   private reconnectAttempt = 0;
   private disposed = false;
   private removed = false;
@@ -73,6 +75,7 @@ export class TerminalSession {
   private viewportWidth = 0;
   private viewportHeight = 0;
   private viewportDpr = 1;
+  private applyingViewport = false;
   private selectionAnchor: CellPoint | undefined;
   private selectionRange: { start: CellPoint; end: CellPoint } | undefined;
   private replayGeneration = 0;
@@ -195,10 +198,15 @@ export class TerminalSession {
     this.element.style.width = `${widthPx}px`;
     this.element.style.height = `${heightPx}px`;
     this.element.style.setProperty("--wmux-host-dpr", String(dpr));
-    this.fit();
+    this.applyingViewport = true;
+    try {
+      this.fit();
+    } finally {
+      this.applyingViewport = false;
+    }
     this.emitMetrics();
     this.emitCursor();
-    this.sendResize(this.visible);
+    this.scheduleViewportResize();
   }
 
   handle(message: Exclude<ToHost, { t: "init" | "attach" | "show" | "detach" | "settings" }>): void {
@@ -247,6 +255,7 @@ export class TerminalSession {
   connect(): void {
     if (this.disposed || this.removed) return;
     this.clearReconnectTimer();
+    this.clearViewportResizeTimer();
     this.closeSocket();
     this.emit({ t: "pane", paneId: this.paneId, state: "connecting" });
     let socket: WebSocket;
@@ -301,6 +310,7 @@ export class TerminalSession {
     this.cancelDurableRefresh();
     if (this.selectionFrame !== undefined) window.cancelAnimationFrame(this.selectionFrame);
     this.clearReconnectTimer();
+    this.clearViewportResizeTimer();
     this.closeSocket();
     for (const disposable of this.disposables) disposable.dispose();
     this.linkDetector.dispose();
@@ -338,7 +348,7 @@ export class TerminalSession {
       this.terminal.onResize(() => {
         this.emitMetrics();
         this.emitCursor();
-        this.sendResize(this.visible);
+        if (!this.applyingViewport) this.sendResize(this.visible);
       }),
       this.terminal.onTitleChange((title) => this.emit({ t: "title", paneId: this.paneId, title })),
       this.terminal.onBell(() => this.emit({ t: "bell", paneId: this.paneId })),
@@ -609,7 +619,8 @@ export class TerminalSession {
   }
 
   private sendTerminalResponse(data: string): void {
-    if (!data) return;
+    // Replay is display-only; answering an old query would inject stale bytes into the live pane.
+    if (!data || this.replaying) return;
     this.sendSocketMessage({ type: "input", data, terminalResponse: true });
   }
 
@@ -838,6 +849,20 @@ export class TerminalSession {
       rows: Math.max(1, Math.floor(this.terminal.rows)),
       foreground,
     });
+  }
+
+  private scheduleViewportResize(): void {
+    // Native keyboard animations report intermediate layouts that must not each become a PTY resize.
+    this.clearViewportResizeTimer();
+    this.viewportResizeTimer = window.setTimeout(() => {
+      this.viewportResizeTimer = undefined;
+      this.sendResize(this.visible);
+    }, VIEWPORT_RESIZE_SETTLE_MS);
+  }
+
+  private clearViewportResizeTimer(): void {
+    if (this.viewportResizeTimer !== undefined) window.clearTimeout(this.viewportResizeTimer);
+    this.viewportResizeTimer = undefined;
   }
 
   private sendSocketMessage(message: PaneClientMessage): void {
