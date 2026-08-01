@@ -14,6 +14,7 @@ import {
 } from "../src/terminal/bridge";
 
 const settings: HostSettings = {
+  terminalFontFamily: '"Fira Code", monospace',
   terminalFontSize: 14,
   terminalScrollbackRows: 10_000,
   colorScheme: "wmux",
@@ -64,6 +65,7 @@ test("terminal bridge rejects malformed and non-finite native input", () => {
     { t: "scroll", paneId: "pane-1", deltaLines: 1, xPx: -1, yPx: 20 },
     { t: "activateLink", paneId: "pane-1", requestId: "", xPx: -1, yPx: 20 },
     { t: "selection", paneId: "pane-1", action: "diagonal" },
+    { t: "settings", settings: { ...settings, terminalFontFamily: "" } },
     { t: "settings", settings: { ...settings, colorScheme: "unknown" } },
   ];
 

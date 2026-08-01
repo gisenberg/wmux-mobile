@@ -2,11 +2,12 @@ import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
 import path from "node:path";
 import { createServer, type ViteDevServer } from "vite";
 
-import type { PaneClientMessage, PaneServerMessage } from "../protocol/wmux";
+import { DEFAULT_TERMINAL_FONT_FAMILY, type PaneClientMessage, type PaneServerMessage } from "../protocol/wmux";
 import type { HostSettings, ToHost, ToNative } from "../src/terminal/bridge";
 import type { TerminalPoolSnapshot } from "../src/terminal/host/terminal-pool";
 
 const settings: HostSettings = {
+  terminalFontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
   terminalFontSize: 14,
   terminalScrollbackRows: 5_000,
   colorScheme: "wmux",
@@ -89,7 +90,7 @@ test("loads bundled terminal fonts before accepting sessions", async ({ page }) 
         return target.__terminalFontLoadRequests?.length ?? 0;
       }),
     )
-    .toBe(2);
+    .toBe(6);
   expect((await nativeMessages(page)).some((message) => message.t === "ready")).toBe(false);
   await page.evaluate(() => {
     const target = window as typeof window & { __releaseTerminalFonts?: () => void };
@@ -106,6 +107,10 @@ test("loads bundled terminal fonts before accepting sessions", async ({ page }) 
   ).toEqual([
     { family: '"Fira Code"', weight: "400" },
     { family: '"Fira Code"', weight: "600" },
+    { family: '"MesloLGM Nerd Font"', weight: "400" },
+    { family: '"MesloLGM Nerd Font"', weight: "700" },
+    { family: '"MesloLGM Nerd Font"', weight: "400" },
+    { family: '"MesloLGM Nerd Font"', weight: "700" },
   ]);
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   expect(
@@ -116,6 +121,42 @@ test("loads bundled terminal fonts before accepting sessions", async ({ page }) 
         .sort(),
     ),
   ).toEqual(["400", "600"]);
+  expect(
+    await page.evaluate(() =>
+      [...document.fonts]
+        .filter((face) => face.family.includes("MesloLGM Nerd Font") && face.status === "loaded")
+        .map((face) => ({ style: face.style, weight: face.weight })),
+    ),
+  ).toEqual([
+    { style: "normal", weight: "400" },
+    { style: "normal", weight: "700" },
+    { style: "italic", weight: "400" },
+    { style: "italic", weight: "700" },
+  ]);
+});
+
+test("uses the server-selected bundled Nerd Font and updates existing sessions", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-font";
+  const mesloSettings: HostSettings = {
+    ...settings,
+    terminalFontFamily: '"MesloLGM Nerd Font"',
+  };
+  await harness.dispatch({
+    t: "init",
+    serverUrl: "https://wmux.invalid",
+    token: "test-token",
+    settings: mesloSettings,
+  });
+  await harness.dispatch({ t: "attach", paneId });
+  await expect
+    .poll(async () => (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.fontFamily)
+    .toContain("MesloLGM Nerd Font");
+
+  await harness.dispatch({ t: "settings", settings });
+  await expect
+    .poll(async () => (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.fontFamily)
+    .toBe(DEFAULT_TERMINAL_FONT_FAMILY);
 });
 
 test("owns pane sockets and preserves raw and checkpoint replay ordering", async ({ page }) => {

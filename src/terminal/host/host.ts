@@ -16,6 +16,7 @@ import { Ghostty } from "ghostty-web";
 import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url";
 
 import { decodeToHost, encodeBridgeMessage, type ToNative } from "../bridge";
+import { bundledMesloFontFaces } from "./fonts";
 import { TerminalPool, type TerminalPoolSnapshot } from "./terminal-pool";
 import "./styles.css";
 
@@ -38,6 +39,7 @@ let pool: TerminalPool | undefined;
 const terminalFontFaces = [
   new FontFace("Fira Code", `url(${firaCode400Url}) format("woff2")`, { style: "normal", weight: "400" }),
   new FontFace("Fira Code", `url(${firaCode600Url}) format("woff2")`, { style: "normal", weight: "600" }),
+  ...bundledMesloFontFaces,
 ];
 
 const emit = (message: ToNative): void => {

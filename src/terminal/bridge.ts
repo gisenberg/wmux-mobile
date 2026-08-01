@@ -6,6 +6,7 @@ export type { TerminalColorSchemeId };
 export const TERMINAL_POOL_CAPACITY = 3;
 
 export interface HostSettings {
+  terminalFontFamily: string;
   terminalFontSize: number;
   terminalScrollbackRows: number;
   colorScheme: TerminalColorSchemeId;
@@ -359,6 +360,8 @@ export const encodeBridgeMessage = (message: ToHost | ToNative): string => JSON.
 const decodeHostSettings = (input: unknown): BridgeDecodeResult<HostSettings> => {
   if (!isRecord(input)) return invalid("settings must be an object");
   if (
+    typeof input.terminalFontFamily !== "string" ||
+    !input.terminalFontFamily.trim() ||
     !positiveNumber(input.terminalFontSize) ||
     !positiveInteger(input.terminalScrollbackRows) ||
     typeof input.colorScheme !== "string" ||
@@ -369,6 +372,7 @@ const decodeHostSettings = (input: unknown): BridgeDecodeResult<HostSettings> =>
     return invalid("settings are malformed");
   }
   return valid({
+    terminalFontFamily: input.terminalFontFamily,
     terminalFontSize: input.terminalFontSize,
     terminalScrollbackRows: input.terminalScrollbackRows,
     colorScheme: input.colorScheme as TerminalColorSchemeId,
