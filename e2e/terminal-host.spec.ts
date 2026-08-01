@@ -316,6 +316,31 @@ test("re-emits mouse tracking when a pooled pane becomes visible again", async (
   await expect.poll(() => inputPayloads(socketA).length).toBe(1);
 });
 
+test("refreshes renderer state when the active pane is shown again", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-reshown";
+  await initializePane(harness, paneId, 640, 360);
+  await harness.send(paneId, ready(paneId, "raw", "visible terminal\r\n"));
+  await expect
+    .poll(
+      async () =>
+        (await harness.messages()).filter((message) => message.t === "metrics" && message.paneId === paneId).length,
+    )
+    .toBeGreaterThan(0);
+  const priorMetrics = (await harness.messages()).filter(
+    (message) => message.t === "metrics" && message.paneId === paneId,
+  ).length;
+
+  await harness.dispatch({ t: "show", paneId });
+
+  await expect
+    .poll(
+      async () =>
+        (await harness.messages()).filter((message) => message.t === "metrics" && message.paneId === paneId).length,
+    )
+    .toBeGreaterThan(priorMetrics);
+});
+
 test("scrolls local Ghostty scrollback without pane input when mouse tracking is disabled", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-local-scrollback";

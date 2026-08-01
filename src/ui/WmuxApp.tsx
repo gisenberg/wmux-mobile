@@ -1030,6 +1030,7 @@ function Dashboard({
       <View style={styles.surfaceStack}>
         <View style={[styles.dashboardSurface, surface !== "terminal" && styles.hiddenSurface]}>
           <LiveTerminalCard
+            active={surface === "terminal"}
             accessToken={accessToken}
             bootstrap={bootstrap}
             endpoint={endpoint}
@@ -1063,6 +1064,7 @@ function usePaneValue<T>(paneId: string, initialValue: T): [T, (value: T) => voi
 }
 
 function LiveTerminalCard({
+  active,
   accessToken,
   bootstrap,
   endpoint,
@@ -1072,6 +1074,7 @@ function LiveTerminalCard({
   onFocusInput,
   terminalRef,
 }: {
+  active: boolean;
   accessToken: string | undefined;
   bootstrap: BootstrapPayload;
   endpoint: string;
@@ -1266,6 +1269,7 @@ function LiveTerminalCard({
           <TerminalToolButton busy={clipboardBusy} label="•••" onPress={openMediaActions} />
         </View>
         <TerminalSurface
+          active={active}
           onMessage={(message) => {
             if ("paneId" in message && message.paneId !== terminalSession.paneId) return;
             if (message.t === "pane") {
