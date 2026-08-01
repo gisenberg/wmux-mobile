@@ -1102,6 +1102,7 @@ function LiveTerminalCard({
       serverUrl: endpoint,
       settings: {
         colorScheme: normalizeTerminalColorScheme(bootstrap.settings.colorScheme),
+        terminalFontFamily: bootstrap.terminalFontFamily,
         terminalFontSize: bootstrap.settings.terminalFontSize,
         terminalScrollMode: bootstrap.settings.terminalScrollMode,
         terminalScrollbackRows: bootstrap.settings.terminalScrollbackRows,
@@ -1112,6 +1113,7 @@ function LiveTerminalCard({
     [
       accessToken,
       bootstrap.settings.colorScheme,
+      bootstrap.terminalFontFamily,
       bootstrap.settings.terminalFontSize,
       bootstrap.settings.terminalScrollMode,
       bootstrap.settings.terminalScrollbackRows,
