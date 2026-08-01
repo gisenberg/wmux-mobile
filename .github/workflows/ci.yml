@@ -16,7 +16,7 @@ jobs:
       - homelab
       - wmux-mobile
     container:
-      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      image: mcr.microsoft.com/playwright:v1.62.0-noble
       options: --user 1000:1000
     env:
       EXPO_NO_TELEMETRY: "1"
