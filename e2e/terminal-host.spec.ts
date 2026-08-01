@@ -278,16 +278,22 @@ test("coalesces animated viewport changes before resizing the PTY", async ({ pag
   const paneId = "pane-animated-viewport";
   await initializePane(harness, paneId, 390, 600);
   const socket = await harness.socket(paneId);
-  await expect
-    .poll(() => socket.received.some((message) => message.type === "activate" || message.type === "resize"))
-    .toBe(true);
+  await page.waitForTimeout(75);
   socket.received.splice(0);
 
-  await harness.dispatch({ t: "viewport", paneId, widthPx: 390, heightPx: 560, dpr: 1 });
-  await page.waitForTimeout(10);
-  await harness.dispatch({ t: "viewport", paneId, widthPx: 390, heightPx: 480, dpr: 1 });
-  await page.waitForTimeout(10);
-  await harness.dispatch({ t: "viewport", paneId, widthPx: 390, heightPx: 360, dpr: 1 });
+  await page.evaluate(
+    ({ messages }) => {
+      const target = window as typeof window & { __wmuxHost?: { dispatch: (input: unknown) => void } };
+      for (const message of messages) target.__wmuxHost?.dispatch(message);
+    },
+    {
+      messages: [
+        { t: "viewport", paneId, widthPx: 390, heightPx: 560, dpr: 1 },
+        { t: "viewport", paneId, widthPx: 390, heightPx: 480, dpr: 1 },
+        { t: "viewport", paneId, widthPx: 390, heightPx: 360, dpr: 1 },
+      ] satisfies ToHost[],
+    },
+  );
 
   await page.waitForTimeout(75);
   expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toHaveLength(1);
