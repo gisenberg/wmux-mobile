@@ -247,6 +247,60 @@ test("owns pane sockets and preserves raw and checkpoint replay ordering", async
     .toContain("checkpoint:checkpoint replay");
 });
 
+test("keeps replay-generated terminal responses out of the live pane", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-replay-responses";
+  await initializePane(harness, paneId, 640, 360);
+  const socket = await harness.socket(paneId);
+  socket.received.splice(0);
+
+  await harness.send(paneId, ready(paneId, "raw", "replay marker\r\n\x1b[c\x1b[>c\x1b]10;?\x07\x1b]11;?\x07"));
+  await expect
+    .poll(async () =>
+      (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join("\n"),
+    )
+    .toContain("replay marker");
+  expect(inputPayloads(socket)).toEqual([]);
+
+  await harness.send(paneId, { type: "output", paneId, data: "\x1b[c" });
+  await expect
+    .poll(() =>
+      socket.received.find(
+        (message): message is Extract<PaneClientMessage, { type: "input" }> =>
+          message.type === "input" && message.data.length > 0,
+      ),
+    )
+    .toMatchObject({ type: "input", terminalResponse: true });
+});
+
+test("coalesces animated viewport changes before resizing the PTY", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-animated-viewport";
+  await initializePane(harness, paneId, 390, 600);
+  const socket = await harness.socket(paneId);
+  await expect
+    .poll(() => socket.received.some((message) => message.type === "activate" || message.type === "resize"))
+    .toBe(true);
+  socket.received.splice(0);
+
+  await harness.dispatch({ t: "viewport", paneId, widthPx: 390, heightPx: 560, dpr: 1 });
+  await page.waitForTimeout(10);
+  await harness.dispatch({ t: "viewport", paneId, widthPx: 390, heightPx: 480, dpr: 1 });
+  await page.waitForTimeout(10);
+  await harness.dispatch({ t: "viewport", paneId, widthPx: 390, heightPx: 360, dpr: 1 });
+
+  await page.waitForTimeout(75);
+  expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toHaveLength(1);
+  const snapshot = (await harness.snapshot()).sessions.find((session) => session.paneId === paneId);
+  expect(socket.received.find((message) => message.type === "activate" || message.type === "resize")).toMatchObject({
+    type: "activate",
+    cols: snapshot?.cols,
+    rows: snapshot?.rows,
+    foreground: true,
+  });
+  expect(inputPayloads(socket)).toEqual([]);
+});
+
 test("claims PTY resize ownership without sending terminal bytes", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-resize-claim";
