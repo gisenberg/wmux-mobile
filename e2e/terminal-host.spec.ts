@@ -357,6 +357,36 @@ test("re-emits mouse tracking when a pooled pane becomes visible again", async (
   await expect.poll(() => inputPayloads(socketA).length).toBe(1);
 });
 
+test("re-emits live connection state when a pooled pane becomes visible again", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneA = "pane-live";
+  const paneB = "pane-switch-target";
+  await initializePane(harness, paneA, 640, 360);
+  await harness.send(paneA, ready(paneA, "raw", "connected\r\n"));
+  await expect
+    .poll(
+      async () =>
+        (await harness.messages()).filter(
+          (message) => message.t === "pane" && message.paneId === paneA && message.state === "live",
+        ).length,
+    )
+    .toBe(1);
+
+  await harness.dispatch({ t: "attach", paneId: paneB });
+  await harness.dispatch({ t: "show", paneId: paneB });
+  await harness.socket(paneB);
+  await harness.dispatch({ t: "show", paneId: paneA });
+
+  await expect
+    .poll(
+      async () =>
+        (await harness.messages()).filter(
+          (message) => message.t === "pane" && message.paneId === paneA && message.state === "live",
+        ).length,
+    )
+    .toBe(2);
+});
+
 test("refreshes renderer state when the active pane is shown again", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-reshown";

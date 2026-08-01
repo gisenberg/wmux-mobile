@@ -26,6 +26,7 @@ import {
   eventDeltaRequiresResync,
   healthDeltaRequiresResync,
   isIncomingBootstrapStale,
+  markWorkspaceNotificationsRead as markWorkspaceNotificationsReadInState,
 } from "@/state/bootstrap";
 
 export type ConnectionPhase =
@@ -46,6 +47,7 @@ export interface WmuxConnection {
   endpoint: string;
   error: string | null;
   forget: () => Promise<void>;
+  markWorkspaceNotificationsRead: (workspaceId: string) => Promise<void>;
   mutate: <T extends WmuxStateMutationResult>(operation: (client: WmuxApiClient) => Promise<T>) => Promise<T | null>;
   phase: ConnectionPhase;
   probe: (input: string) => Promise<void>;
@@ -172,6 +174,22 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
       }
     },
     [commitBootstrap, handleUnauthorized],
+  );
+
+  const markWorkspaceNotificationsRead = useCallback(
+    async (workspaceId: string): Promise<void> => {
+      const current = bootstrapRef.current;
+      if (
+        !current ||
+        !current.notifications.some((notification) => notification.workspaceId === workspaceId && !notification.read)
+      ) {
+        return;
+      }
+      commitBootstrap(markWorkspaceNotificationsReadInState(current, workspaceId));
+      const result = await mutate((client) => client.markWorkspaceNotificationsRead(workspaceId));
+      if (!result && bootstrapRef.current) void refreshBootstrap();
+    },
+    [commitBootstrap, mutate, refreshBootstrap],
   );
 
   const handleEventMessage = useCallback(
@@ -481,6 +499,7 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
     endpoint,
     error,
     forget,
+    markWorkspaceNotificationsRead,
     mutate,
     phase,
     probe,

@@ -53,6 +53,16 @@ export const isIncomingBootstrapStale = (
           (incoming.healthEpoch === current.healthEpoch && incoming.eventRevision < current.eventRevision)))),
   );
 
+export const markWorkspaceNotificationsRead = (current: BootstrapPayload, workspaceId: string): BootstrapPayload => {
+  let changed = false;
+  const notifications = current.notifications.map((notification) => {
+    if (notification.read || notification.workspaceId !== workspaceId) return notification;
+    changed = true;
+    return { ...notification, read: true };
+  });
+  return changed ? { ...current, notifications } : current;
+};
+
 export const applyEventMessage = (current: BootstrapPayload, message: EventServerMessage): BootstrapPayload => {
   if (message.type === "snapshot") {
     return isIncomingBootstrapStale(current, message.state) ? current : message.state;

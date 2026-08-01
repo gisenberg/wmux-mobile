@@ -62,6 +62,7 @@ const busyPhases: ReadonlySet<ConnectionPhase> = new Set(["restoring", "probing"
 
 export function WmuxApp() {
   const connection = useWmuxConnection(defaultEndpoint);
+  const markWorkspaceNotificationsRead = connection.markWorkspaceNotificationsRead;
   const inputRef = useRef<TerminalInputHandle>(null);
   const inputTargetRef = useRef<"diagnostic" | "terminal" | null>(null);
   const terminalRef = useRef<TerminalSurfaceHandle>(null);
@@ -282,6 +283,14 @@ export function WmuxApp() {
     [activePaneId, showClipboardNotice],
   );
 
+  const navigateTo = useCallback(
+    (next: ResolvedNavigation): void => {
+      setNavigationPreference(next.selection);
+      void markWorkspaceNotificationsRead(next.workspace.id);
+    },
+    [markWorkspaceNotificationsRead],
+  );
+
   const showDashboard =
     diagnosticsView === null && connection.bootstrap && dashboardPhase && navigation
       ? {
@@ -315,7 +324,7 @@ export function WmuxApp() {
               setUsernameDraft(null);
               void connection.forget();
             }}
-            onNavigate={(next) => setNavigationPreference(next.selection)}
+            onNavigate={navigateTo}
             onOpenDiagnostics={() => setDiagnosticsView("renderer")}
             onRetry={() => void connection.retry()}
             onUpdateSettings={(settings) => void updateSettings(settings)}

@@ -16,6 +16,7 @@ import {
   bootstrapSatisfiesHealthDelta,
   eventDeltaRequiresResync,
   healthDeltaRequiresResync,
+  markWorkspaceNotificationsRead,
 } from "../src/state/bootstrap";
 
 const settings: WmuxSettings = {
@@ -118,6 +119,7 @@ test("workspace mutations use the wmux REST contract and preserve authentication
       method: init?.method ?? "GET",
       url: input,
     });
+    if (input.endsWith("/notifications/read")) return Response.json(bootstrap());
     return Response.json({ settings: bootstrap().settings, state: bootstrap(), tab: {}, workspace: {} });
   };
   const client = new WmuxApiClient("https://wmux.example", "access-token", fetchImpl);
@@ -130,6 +132,7 @@ test("workspace mutations use the wmux REST contract and preserve authentication
   await client.closePane("tab/one", "pane/one");
   await client.closeTab("workspace/one", "tab/one");
   await client.closeWorkspace("workspace/one");
+  const markedRead = await client.markWorkspaceNotificationsRead("workspace/one");
 
   assert.deepEqual(
     requests.map(({ method, url }) => ({ method, url })),
@@ -141,6 +144,10 @@ test("workspace mutations use the wmux REST contract and preserve authentication
       { method: "DELETE", url: "https://wmux.example/api/tabs/tab%2Fone/panes/pane%2Fone" },
       { method: "DELETE", url: "https://wmux.example/api/workspaces/workspace%2Fone/tabs/tab%2Fone" },
       { method: "DELETE", url: "https://wmux.example/api/workspaces/workspace%2Fone" },
+      {
+        method: "POST",
+        url: "https://wmux.example/api/workspaces/workspace%2Fone/notifications/read",
+      },
     ],
   );
   assert.deepEqual(JSON.parse(requests[1]?.body ?? ""), {
@@ -153,6 +160,22 @@ test("workspace mutations use the wmux REST contract and preserve authentication
     paneId: "pane/one",
   });
   assert.ok(requests.every(({ headers }) => headers.get("authorization") === "Bearer access-token"));
+  assert.deepEqual(markedRead.state, bootstrap());
+});
+
+test("marking a workspace read updates only its unread notifications", () => {
+  const targetUnread = notification("target-unread");
+  const targetRead = { ...notification("target-read"), read: true };
+  const otherUnread = { ...notification("other-unread"), workspaceId: "workspace-2" };
+  const initial = { ...bootstrap(), notifications: [targetUnread, targetRead, otherUnread] };
+
+  const updated = markWorkspaceNotificationsRead(initial, "workspace-1");
+
+  assert.notEqual(updated, initial);
+  assert.equal(updated.notifications[0]?.read, true);
+  assert.equal(updated.notifications[1], targetRead);
+  assert.equal(updated.notifications[2], otherUnread);
+  assert.equal(markWorkspaceNotificationsRead(updated, "workspace-1"), updated);
 });
 
 test("native image paste and attachment requests preserve binary and JSON contracts", async () => {
