@@ -163,6 +163,14 @@ export class WmuxApiClient {
     return this.request(`/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: "DELETE" });
   }
 
+  async markWorkspaceNotificationsRead(workspaceId: string): Promise<{ state: BootstrapPayload }> {
+    const state = await this.request<BootstrapPayload>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/notifications/read`,
+      { method: "POST" },
+    );
+    return { state };
+  }
+
   createTab(
     workspaceId: string,
     machineId: string,

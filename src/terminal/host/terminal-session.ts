@@ -35,6 +35,8 @@ interface CellPoint {
   y: number;
 }
 
+type PaneConnectionState = Extract<ToNative, { t: "pane" }>["state"];
+
 export interface TerminalSessionSnapshot {
   paneId: string;
   fontFamily: string;
@@ -94,6 +96,8 @@ export class TerminalSession {
   private selectionIncludeText = false;
   private resizeClaimPending = false;
   private mouseTracking: boolean | undefined;
+  private paneConnectionState: PaneConnectionState = "connecting";
+  private paneConnectionIssue: string | undefined;
 
   constructor(options: TerminalSessionOptions) {
     this.paneId = options.paneId;
@@ -180,6 +184,7 @@ export class TerminalSession {
       return;
     }
     this.onActivity();
+    this.emitPaneConnectionState();
     window.requestAnimationFrame(() => {
       if (this.disposed) return;
       this.fit();
@@ -257,7 +262,7 @@ export class TerminalSession {
     this.clearReconnectTimer();
     this.clearViewportResizeTimer();
     this.closeSocket();
-    this.emit({ t: "pane", paneId: this.paneId, state: "connecting" });
+    this.setPaneConnectionState("connecting");
     let socket: WebSocket;
     try {
       socket = new WebSocket(this.paneSocketUrl());
@@ -297,7 +302,7 @@ export class TerminalSession {
     if (this.disposed || this.removed) return;
     this.exited = false;
     this.reconnectAttempt = 0;
-    this.emit({ t: "pane", paneId: this.paneId, state: "connecting", issue });
+    this.setPaneConnectionState("connecting", issue);
     this.connect();
   }
 
@@ -317,7 +322,7 @@ export class TerminalSession {
     this.keyEncoder.dispose();
     this.terminal.dispose();
     this.element.remove();
-    if (issue) this.emit({ t: "pane", paneId: this.paneId, state: "lost", issue });
+    if (issue) this.setPaneConnectionState("lost", issue);
   }
 
   snapshot(): TerminalSessionSnapshot {
@@ -377,7 +382,7 @@ export class TerminalSession {
 
   private handleSocketMessage(message: PaneServerMessage): void {
     if (message.type === "starting") {
-      this.emit({ t: "pane", paneId: this.paneId, state: "connecting", issue: message.label });
+      this.setPaneConnectionState("connecting", message.label);
       return;
     }
     if (message.type === "ready") {
@@ -390,7 +395,7 @@ export class TerminalSession {
         this.startReplay(message.replay);
       }
       this.emit({ t: "title", paneId: this.paneId, title: message.title });
-      this.emit({ t: "pane", paneId: this.paneId, state: "live" });
+      this.setPaneConnectionState("live");
       this.sendResize(this.visible);
       return;
     }
@@ -408,17 +413,12 @@ export class TerminalSession {
       this.cancelDurableRefresh();
       this.exited = true;
       this.emit({ t: "exit", paneId: this.paneId, code: message.code });
-      this.emit({
-        t: "pane",
-        paneId: this.paneId,
-        state: "exited",
-        issue: `Process exited with code ${message.code ?? "?"}`,
-      });
+      this.setPaneConnectionState("exited", `Process exited with code ${message.code ?? "?"}`);
       return;
     }
     this.cancelDurableRefresh();
     this.removed = true;
-    this.emit({ t: "pane", paneId: this.paneId, state: "lost", issue: "Pane was removed" });
+    this.setPaneConnectionState("lost", "Pane was removed");
     this.closeSocket();
   }
 
@@ -886,7 +886,7 @@ export class TerminalSession {
 
   private scheduleReconnect(issue: string): void {
     if (this.disposed || this.removed || this.exited || this.reconnectTimer !== undefined) return;
-    this.emit({ t: "pane", paneId: this.paneId, state: "lost", issue });
+    this.setPaneConnectionState("lost", issue);
     const delay = Math.min(RECONNECT_MAX_MS, 400 * 2 ** Math.min(this.reconnectAttempt, 5));
     this.reconnectAttempt += 1;
     this.reconnectTimer = window.setTimeout(() => {
@@ -904,6 +904,21 @@ export class TerminalSession {
     const socket = this.socket;
     this.socket = null;
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "wmux host reconnect");
+  }
+
+  private setPaneConnectionState(state: PaneConnectionState, issue?: string): void {
+    this.paneConnectionState = state;
+    this.paneConnectionIssue = issue;
+    this.emitPaneConnectionState();
+  }
+
+  private emitPaneConnectionState(): void {
+    this.emit({
+      t: "pane",
+      paneId: this.paneId,
+      state: this.paneConnectionState,
+      ...(this.paneConnectionIssue === undefined ? {} : { issue: this.paneConnectionIssue }),
+    });
   }
 }
 
