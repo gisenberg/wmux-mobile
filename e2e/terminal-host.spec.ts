@@ -915,6 +915,34 @@ test("emits low-frequency control signals without bridging terminal output", asy
   expect(bridged.some((message) => (message as { t: string }).t === "output")).toBe(false);
 });
 
+test("copies soft-wrapped rows without adding newlines", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-copy-wraps";
+  await initializePane(harness, paneId, 320, 320);
+  const cols = (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.cols;
+  expect(cols).toBeGreaterThan(8);
+
+  const wrappedLine = "a".repeat((cols ?? 9) + 7);
+  const explicitLine = "actual newline";
+  await harness.send(paneId, ready(paneId, "raw", `${wrappedLine}\r\n${explicitLine}`));
+  await expect
+    .poll(async () => (await harness.snapshot()).sessions.find((session) => session.paneId === paneId)?.lines.join(""))
+    .toContain(`${wrappedLine}${explicitLine}`);
+
+  await harness.dispatch({ t: "selection", paneId, action: "all" });
+  await harness.dispatch({ t: "copySelection", paneId });
+
+  await expect
+    .poll(async () => {
+      const message = (await harness.messages()).findLast(
+        (candidate): candidate is Extract<ToNative, { t: "selection" }> =>
+          candidate.t === "selection" && candidate.active && typeof candidate.text === "string",
+      );
+      return message?.text;
+    })
+    .toBe(`${wrappedLine}\n${explicitLine}`);
+});
+
 test("keeps exactly three terminals and evicts the least recently used background pane", async ({ page }) => {
   const harness = await openHarness(page);
   await harness.dispatch({ t: "init", serverUrl: "https://wmux.invalid", token: "test-token", settings });

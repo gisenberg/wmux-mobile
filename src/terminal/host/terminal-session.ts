@@ -830,15 +830,18 @@ export class TerminalSession {
   private readSelectionText(): string {
     const range = this.selectionRange;
     if (!range) return "";
-    const lines: string[] = [];
+    let text = "";
+    let hasLine = false;
     for (let viewportRow = range.start.y; viewportRow <= range.end.y; viewportRow += 1) {
       const line = this.terminal.buffer.active.getLine(this.absoluteBufferRow(viewportRow));
       if (!line) continue;
       const startColumn = viewportRow === range.start.y ? range.start.x : 0;
       const endColumn = viewportRow === range.end.y ? range.end.x + 1 : this.terminal.cols;
-      lines.push(line.translateToString(true, startColumn, endColumn));
+      if (hasLine && !line.isWrapped) text += "\n";
+      text += line.translateToString(true, startColumn, endColumn);
+      hasLine = true;
     }
-    return lines.join("\n").replace(/\n+$/, "");
+    return text.replace(/\n+$/, "");
   }
 
   private sendResize(foreground = false): void {
