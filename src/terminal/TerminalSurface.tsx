@@ -29,6 +29,7 @@ export interface TerminalSurfaceSession {
 }
 
 interface TerminalSurfaceProps {
+  active?: boolean;
   session?: TerminalSurfaceSession;
   onMessage?: (message: ToNative) => void;
   onStatusChange?: (status: TerminalSurfaceStatus, issue?: string) => void;
@@ -51,7 +52,7 @@ interface PendingLinkRequest {
 }
 
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(function TerminalSurface(
-  { session, onMessage, onStatusChange, style },
+  { active = true, session, onMessage, onStatusChange, style },
   forwardedRef,
 ) {
   const webViewRef = useRef<WebView>(null);
@@ -130,11 +131,15 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       settings: session.settings,
     });
     post({ t: "attach", paneId: session.paneId });
-    post({ t: "show", paneId: session.paneId });
   }, [post, ready, session]);
 
   useEffect(() => {
-    if (!ready || !session || viewport.width <= 0 || viewport.height <= 0) return;
+    if (!active || !ready || !session) return;
+    post({ t: "show", paneId: session.paneId });
+  }, [active, post, ready, session]);
+
+  useEffect(() => {
+    if (!active || !ready || !session || viewport.width <= 0 || viewport.height <= 0) return;
     post({
       t: "viewport",
       paneId: session.paneId,
@@ -142,7 +147,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       heightPx: viewport.height,
       dpr: PixelRatio.get(),
     });
-  }, [post, ready, session, viewport.height, viewport.width]);
+  }, [active, post, ready, session, viewport.height, viewport.width]);
 
   const handleLayout = useCallback((event: LayoutChangeEvent): void => {
     const { height, width } = event.nativeEvent.layout;
