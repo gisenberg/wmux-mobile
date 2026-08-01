@@ -186,10 +186,9 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
         return;
       }
       commitBootstrap(markWorkspaceNotificationsReadInState(current, workspaceId));
-      const result = await mutate((client) => client.markWorkspaceNotificationsRead(workspaceId));
-      if (!result && bootstrapRef.current) void refreshBootstrap();
+      await mutate((client) => client.markWorkspaceNotificationsRead(workspaceId));
     },
-    [commitBootstrap, mutate, refreshBootstrap],
+    [commitBootstrap, mutate],
   );
 
   const handleEventMessage = useCallback(

@@ -91,6 +91,11 @@ export function WmuxApp() {
     [connection.bootstrap, navigationPreference],
   );
   const activePaneId = navigation?.pane.id;
+  const activeWorkspaceId = navigation?.workspace.id;
+  const activeWorkspaceHasUnreadNotifications =
+    connection.bootstrap?.notifications.some(
+      (notification) => notification.workspaceId === activeWorkspaceId && !notification.read,
+    ) ?? false;
   const activeChromeTheme = chromeTheme(connection.bootstrap?.settings.colorScheme ?? "wmux");
 
   const showClipboardNotice = useCallback((message: string): void => {
@@ -106,6 +111,11 @@ export function WmuxApp() {
       .then(() => showClipboardNotice("wmux clipboard copied"))
       .catch(() => showClipboardNotice("Clipboard handoff failed"));
   }, [connection.clipboardHandoff, showClipboardNotice]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !activeWorkspaceHasUnreadNotifications) return;
+    void markWorkspaceNotificationsRead(activeWorkspaceId);
+  }, [activeWorkspaceHasUnreadNotifications, activeWorkspaceId, markWorkspaceNotificationsRead]);
 
   useEffect(
     () => () => {
@@ -283,13 +293,9 @@ export function WmuxApp() {
     [activePaneId, showClipboardNotice],
   );
 
-  const navigateTo = useCallback(
-    (next: ResolvedNavigation): void => {
-      setNavigationPreference(next.selection);
-      void markWorkspaceNotificationsRead(next.workspace.id);
-    },
-    [markWorkspaceNotificationsRead],
-  );
+  const navigateTo = useCallback((next: ResolvedNavigation): void => {
+    setNavigationPreference(next.selection);
+  }, []);
 
   const showDashboard =
     diagnosticsView === null && connection.bootstrap && dashboardPhase && navigation
