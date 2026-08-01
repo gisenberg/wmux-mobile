@@ -1037,7 +1037,14 @@ function Dashboard({
         </View>
       ) : null}
       <View style={styles.surfaceStack}>
-        <View style={[styles.dashboardSurface, surface !== "terminal" && styles.hiddenSurface]}>
+        {/* Keep both surfaces rendered; hiding the WebView can drop its native rendering layer. */}
+        <View
+          accessibilityElementsHidden={surface !== "terminal"}
+          collapsable={false}
+          importantForAccessibility={surface === "terminal" ? "auto" : "no-hide-descendants"}
+          pointerEvents={surface === "terminal" ? "auto" : "none"}
+          style={[styles.dashboardSurface, surface === "terminal" && styles.activeSurface]}
+        >
           <LiveTerminalCard
             active={surface === "terminal"}
             accessToken={accessToken}
@@ -1053,7 +1060,13 @@ function Dashboard({
             terminalRef={terminalRef}
           />
         </View>
-        <View style={[styles.dashboardSurface, surface !== "chat" && styles.hiddenSurface]}>
+        <View
+          accessibilityElementsHidden={surface !== "chat"}
+          collapsable={false}
+          importantForAccessibility={surface === "chat" ? "auto" : "no-hide-descendants"}
+          pointerEvents={surface === "chat" ? "auto" : "none"}
+          style={[styles.dashboardSurface, surface === "chat" && styles.activeSurface]}
+        >
           <ChatSurface
             bootstrap={bootstrap}
             navigation={navigation}
@@ -2172,8 +2185,8 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
   },
-  hiddenSurface: {
-    display: "none",
+  activeSurface: {
+    zIndex: 1,
   },
   dashboardError: {
     paddingHorizontal: 8,
