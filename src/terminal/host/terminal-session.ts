@@ -3,6 +3,7 @@ import { LinkDetector, OSC8LinkProvider, Terminal } from "ghostty-web";
 
 import type { PaneClientMessage, PaneServerMessage, PaneReplayKind } from "../../../protocol/wmux";
 import type { HostSettings, ToHost, ToNative } from "../bridge";
+import { terminalFontFamilyStack } from "./fonts";
 import { SemanticKeyEncoder } from "./key-encoder";
 import { mouseWheelInput } from "./mouse-wheel";
 import { OutputPipeline } from "./output-pipeline";
@@ -35,6 +36,7 @@ interface CellPoint {
 
 export interface TerminalSessionSnapshot {
   paneId: string;
+  fontFamily: string;
   cols: number;
   rows: number;
   visible: boolean;
@@ -112,7 +114,7 @@ export class TerminalSession {
       disableStdin: true,
       emitTerminalResponses: true,
       focusOnOpen: false,
-      fontFamily: '"Fira Code", "SFMono-Regular", Menlo, Consolas, monospace',
+      fontFamily: terminalFontFamilyStack(options.settings.terminalFontFamily),
       fontSize: options.settings.terminalFontSize,
       preserveScrollOnWrite: true,
       scrollback: options.settings.terminalScrollbackRows,
@@ -155,6 +157,7 @@ export class TerminalSession {
     this.settings = settings;
     const scheme = colorSchemeById(settings.colorScheme);
     this.terminal.renderer?.setTheme(scheme.terminal);
+    this.terminal.renderer?.setFontFamily(terminalFontFamilyStack(settings.terminalFontFamily));
     this.terminal.renderer?.setFontSize(settings.terminalFontSize);
     this.terminal.options.scrollback = settings.terminalScrollbackRows;
     window.requestAnimationFrame(() => {
@@ -316,6 +319,7 @@ export class TerminalSession {
     }
     return {
       paneId: this.paneId,
+      fontFamily: terminalFontFamilyStack(this.settings.terminalFontFamily),
       cols: this.terminal.cols,
       rows: this.terminal.rows,
       visible: this.visible,

@@ -66,7 +66,8 @@ npm run test:host
 The Playwright suite uses mocked pane WebSockets to cover raw and checkpoint replay, resize, semantic key encoding, bracketed paste, OSC 52, alternate-screen state, Kitty media, selection, and pool eviction.
 It also verifies a deterministic screenshot rendered with the Ghostty package and color schemes pinned from the adjacent wmux commit.
 
-The app header exposes a renderer diagnostic that initializes the bundled fonts, JavaScript, and Ghostty WebAssembly inside the platform WebView without contacting a server.
+The terminal host bundles Fira Code and the same MesloLGM Nerd Font Mono faces as wmux, including regular, bold, italic, and bold italic.
+The app header exposes a renderer diagnostic that initializes those fonts, JavaScript, and Ghostty WebAssembly inside the platform WebView without contacting a server.
 
 ## Native terminal input
 
