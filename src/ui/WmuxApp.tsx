@@ -3,7 +3,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
   Linking,
   PanResponder,
   Platform,
@@ -16,6 +15,7 @@ import {
   View,
   type LayoutChangeEvent,
 } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import type { BootstrapPayload, WmuxSettings } from "../../protocol/wmux";
@@ -308,7 +308,11 @@ export function WmuxApp() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: activeChromeTheme.canvas }]}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
+      <KeyboardAvoidingView
+        automaticOffset
+        style={styles.flex}
+        {...(Platform.OS === "ios" ? { behavior: "padding" as const } : {})}
+      >
         {showDashboard ? (
           <Dashboard
             accessToken={connection.terminalAccessToken}

@@ -78,6 +78,7 @@ export class TerminalSession {
   private viewportHeight = 0;
   private viewportDpr = 1;
   private applyingViewport = false;
+  private lastSentDimensions: { cols: number; rows: number } | undefined;
   private selectionAnchor: CellPoint | undefined;
   private selectionRange: { start: CellPoint; end: CellPoint } | undefined;
   private replayGeneration = 0;
@@ -197,6 +198,7 @@ export class TerminalSession {
   }
 
   setViewport(widthPx: number, heightPx: number, dpr: number): void {
+    if (this.viewportWidth === widthPx && this.viewportHeight === heightPx && this.viewportDpr === dpr) return;
     this.viewportWidth = widthPx;
     this.viewportHeight = heightPx;
     this.viewportDpr = dpr;
@@ -844,14 +846,23 @@ export class TerminalSession {
     return text.replace(/\n+$/, "");
   }
 
-  private sendResize(foreground = false): void {
+  private sendResize(foreground = false, deduplicate = false): void {
     const type = foreground ? "activate" : "resize";
-    this.sendSocketMessage({
-      type,
+    const dimensions = {
       cols: Math.max(2, Math.floor(this.terminal.cols)),
       rows: Math.max(1, Math.floor(this.terminal.rows)),
-      foreground,
-    });
+    };
+    if (deduplicate && sameDimensions(dimensions, this.lastSentDimensions)) return;
+    if (
+      !this.sendSocketMessage({
+        type,
+        ...dimensions,
+        foreground,
+      })
+    ) {
+      return;
+    }
+    this.lastSentDimensions = dimensions;
   }
 
   private scheduleViewportResize(): void {
@@ -859,7 +870,7 @@ export class TerminalSession {
     this.clearViewportResizeTimer();
     this.viewportResizeTimer = window.setTimeout(() => {
       this.viewportResizeTimer = undefined;
-      this.sendResize(this.visible);
+      this.sendResize(this.visible, true);
     }, VIEWPORT_RESIZE_SETTLE_MS);
   }
 
@@ -868,9 +879,10 @@ export class TerminalSession {
     this.viewportResizeTimer = undefined;
   }
 
-  private sendSocketMessage(message: PaneClientMessage): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
+  private sendSocketMessage(message: PaneClientMessage): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
     this.socket.send(JSON.stringify(message));
+    return true;
   }
 
   private paneSocketUrl(): string {
@@ -903,6 +915,7 @@ export class TerminalSession {
   private closeSocket(): void {
     const socket = this.socket;
     this.socket = null;
+    this.lastSentDimensions = undefined;
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "wmux host reconnect");
   }
 
@@ -921,6 +934,11 @@ export class TerminalSession {
     });
   }
 }
+
+const sameDimensions = (
+  first: { cols: number; rows: number },
+  second: { cols: number; rows: number } | undefined,
+): boolean => second !== undefined && first.cols === second.cols && first.rows === second.rows;
 
 const decodePaneServerMessage = (value: string, paneId: string): PaneServerMessage | null => {
   let parsed: unknown;

@@ -11,9 +11,12 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { useGenericKeyboardHandler } from "react-native-keyboard-controller";
+import { runOnJS } from "react-native-reanimated";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { decodeToNative, encodeBridgeMessage, type HostSettings, type ToHost, type ToNative } from "@/terminal/bridge";
+import { TerminalViewportCoordinator, type TerminalViewport } from "@/terminal/viewport-coordinator";
 import { colors, fonts } from "@/ui/theme";
 
 const terminalHostAsset = require("../../dist/terminal-host/index.html") as number;
@@ -41,11 +44,6 @@ export interface TerminalSurfaceHandle {
   send(message: ToHost): void;
 }
 
-interface Viewport {
-  width: number;
-  height: number;
-}
-
 interface PendingLinkRequest {
   resolve: (url: string | undefined) => void;
   timeout: ReturnType<typeof setTimeout>;
@@ -61,7 +59,8 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
   const [html, setHtml] = useState<string | null>(null);
   const [issue, setIssue] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0 });
+  const [viewport, setViewport] = useState<TerminalViewport>({ width: 0, height: 0 });
+  const viewportCoordinator = useMemo(() => new TerminalViewportCoordinator(setViewport), []);
   const status: TerminalSurfaceStatus = issue ? "error" : !html ? "loading-asset" : ready ? "ready" : "loading-host";
   const baseUrl = useMemo(() => normalizedBaseUrl(session?.serverUrl ?? diagnosticsBaseUrl), [session?.serverUrl]);
 
@@ -111,15 +110,39 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
 
   useImperativeHandle(forwardedRef, () => ({ activateLink, send: post }), [activateLink, post]);
 
-  useEffect(
-    () => () => {
-      for (const request of pendingLinkRequestsRef.current.values()) {
+  useEffect(() => {
+    viewportCoordinator.activate();
+    const pendingLinkRequests = pendingLinkRequestsRef.current;
+    return () => {
+      viewportCoordinator.dispose();
+      for (const request of pendingLinkRequests.values()) {
         clearTimeout(request.timeout);
         request.resolve(undefined);
       }
-      pendingLinkRequestsRef.current.clear();
+      pendingLinkRequests.clear();
+    };
+  }, [viewportCoordinator]);
+
+  const beginViewportTransition = useCallback((): void => {
+    viewportCoordinator.beginTransition();
+  }, [viewportCoordinator]);
+
+  const endViewportTransition = useCallback((): void => {
+    viewportCoordinator.endTransition();
+  }, [viewportCoordinator]);
+
+  useGenericKeyboardHandler(
+    {
+      onStart: () => {
+        "worklet";
+        runOnJS(beginViewportTransition)();
+      },
+      onEnd: () => {
+        "worklet";
+        runOnJS(endViewportTransition)();
+      },
     },
-    [],
+    [beginViewportTransition, endViewportTransition],
   );
 
   useEffect(() => {
@@ -149,10 +172,13 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
     });
   }, [active, post, ready, session, viewport.height, viewport.width]);
 
-  const handleLayout = useCallback((event: LayoutChangeEvent): void => {
-    const { height, width } = event.nativeEvent.layout;
-    setViewport((current) => (current.width === width && current.height === height ? current : { width, height }));
-  }, []);
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent): void => {
+      const { height, width } = event.nativeEvent.layout;
+      viewportCoordinator.update({ width, height });
+    },
+    [viewportCoordinator],
+  );
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent): void => {

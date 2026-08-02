@@ -78,6 +78,7 @@ The Android implementation pairs its native input connection with a React Native
 Both rows expose Escape, Tab, arrows, Ctrl, Alt, and terminal punctuation.
 Ctrl and Alt arm for one key on a single tap and lock on a double tap.
 Held arrows repeat in native code without JavaScript timers.
+Keyboard animations keep the current terminal grid stable and apply only the final native viewport to the renderer and PTY.
 The renderer diagnostic includes an offline key-input mode that records committed text, semantic keys, modifier state, and keyboard focus.
 
 ## Workspace navigation

@@ -307,6 +307,30 @@ test("coalesces animated viewport changes before resizing the PTY", async ({ pag
   expect(inputPayloads(socket)).toEqual([]);
 });
 
+test("does not resize the PTY for viewport changes within the current cell grid", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-equivalent-viewport";
+  await initializePane(harness, paneId, 390, 600);
+  const socket = await harness.socket(paneId);
+  await page.waitForTimeout(75);
+  socket.received.splice(0);
+  const metrics = (await harness.messages()).findLast(
+    (message): message is Extract<ToNative, { t: "metrics" }> => message.t === "metrics" && message.paneId === paneId,
+  );
+  if (!metrics) throw new Error("Terminal metrics were not emitted");
+
+  await harness.dispatch({
+    t: "viewport",
+    paneId,
+    widthPx: (metrics.cols + 0.5) * metrics.cellW,
+    heightPx: (metrics.rows + 0.5) * metrics.cellH,
+    dpr: 1,
+  });
+  await page.waitForTimeout(75);
+
+  expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toEqual([]);
+});
+
 test("claims PTY resize ownership without sending terminal bytes", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-resize-claim";
