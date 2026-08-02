@@ -82,6 +82,28 @@ test("deduplicates unchanged viewport layouts", () => {
   assert.deepEqual(committed, [{ width: 390, height: 360 }]);
 });
 
+test("coalesces ordinary layout jitter after the initial viewport", () => {
+  const frames = createFrameScheduler();
+  const committed: TerminalViewport[] = [];
+  const coordinator = new TerminalViewportCoordinator(
+    (viewport) => committed.push(viewport),
+    frames.schedule,
+    frames.cancel,
+  );
+
+  coordinator.update({ width: 390, height: 600 });
+  coordinator.update({ width: 390, height: 599 });
+  coordinator.update({ width: 390, height: 598 });
+
+  assert.deepEqual(committed, [{ width: 390, height: 600 }]);
+  frames.flush();
+  frames.flush();
+  assert.deepEqual(committed, [
+    { width: 390, height: 600 },
+    { width: 390, height: 598 },
+  ]);
+});
+
 test("cancels pending frames on disposal and can reactivate after a strict-effect cleanup", () => {
   const frames = createFrameScheduler();
   const committed: TerminalViewport[] = [];

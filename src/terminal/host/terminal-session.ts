@@ -16,7 +16,8 @@ const DURABLE_REFRESH_FIRST_NUDGE_MS = 120;
 const DURABLE_REFRESH_QUIET_MS = 80;
 const DURABLE_REFRESH_FALLBACK_MS = 700;
 const EMPTY_REPLAY_REPAINT_MS = 700;
-const VIEWPORT_RESIZE_SETTLE_MS = 50;
+const VIEWPORT_RESIZE_SETTLE_MS = 120;
+const CELL_BOUNDARY_HYSTERESIS = 0.2;
 const REPAINT_INPUT = "\x0c";
 
 interface TerminalSessionOptions {
@@ -77,8 +78,9 @@ export class TerminalSession {
   private viewportWidth = 0;
   private viewportHeight = 0;
   private viewportDpr = 1;
+  private viewportGridEstablished = false;
   private applyingViewport = false;
-  private lastSentDimensions: { cols: number; rows: number } | undefined;
+  private lastSentResize: { cols: number; rows: number; foreground: boolean } | undefined;
   private selectionAnchor: CellPoint | undefined;
   private selectionRange: { start: CellPoint; end: CellPoint } | undefined;
   private replayGeneration = 0;
@@ -162,21 +164,43 @@ export class TerminalSession {
   }
 
   applySettings(settings: HostSettings): void {
+    if (sameHostSettings(this.settings, settings)) return;
+    const fontChanged =
+      this.settings.terminalFontFamily !== settings.terminalFontFamily ||
+      this.settings.terminalFontSize !== settings.terminalFontSize;
+    const themeChanged = this.settings.colorScheme !== settings.colorScheme;
+    const scrollbackChanged = this.settings.terminalScrollbackRows !== settings.terminalScrollbackRows;
     this.settings = settings;
-    const scheme = colorSchemeById(settings.colorScheme);
-    this.terminal.renderer?.setTheme(scheme.terminal);
-    this.terminal.renderer?.setFontFamily(terminalFontFamilyStack(settings.terminalFontFamily));
-    this.terminal.renderer?.setFontSize(settings.terminalFontSize);
-    this.terminal.options.scrollback = settings.terminalScrollbackRows;
+    if (themeChanged) this.terminal.renderer?.setTheme(colorSchemeById(settings.colorScheme).terminal);
+    if (scrollbackChanged) this.terminal.options.scrollback = settings.terminalScrollbackRows;
+    if (!fontChanged) return;
+    this.viewportGridEstablished = false;
+    this.applyingViewport = true;
+    try {
+      this.terminal.renderer?.setFontFamily(terminalFontFamilyStack(settings.terminalFontFamily));
+      this.terminal.renderer?.setFontSize(settings.terminalFontSize);
+    } finally {
+      this.applyingViewport = false;
+    }
     window.requestAnimationFrame(() => {
       if (this.disposed) return;
-      this.fit();
+      this.applyingViewport = true;
+      try {
+        this.fit();
+      } finally {
+        this.applyingViewport = false;
+      }
       this.emitMetrics();
-      this.sendResize();
+      this.emitCursor();
+      if (this.visible) this.sendResize(true);
     });
   }
 
   setVisible(visible: boolean): void {
+    if (this.visible === visible) {
+      if (visible) this.refreshVisibleTerminal();
+      return;
+    }
     this.visible = visible;
     this.element.hidden = !visible;
     this.element.setAttribute("aria-hidden", visible ? "false" : "true");
@@ -186,8 +210,12 @@ export class TerminalSession {
     }
     this.onActivity();
     this.emitPaneConnectionState();
+    this.refreshVisibleTerminal();
+  }
+
+  private refreshVisibleTerminal(): void {
     window.requestAnimationFrame(() => {
-      if (this.disposed) return;
+      if (this.disposed || !this.visible) return;
       this.fit();
       this.redrawVisibleTerminal();
       this.emitMetrics();
@@ -398,7 +426,6 @@ export class TerminalSession {
       }
       this.emit({ t: "title", paneId: this.paneId, title: message.title });
       this.setPaneConnectionState("live");
-      this.sendResize(this.visible);
       return;
     }
     if (message.type === "output") {
@@ -749,12 +776,13 @@ export class TerminalSession {
     const width = this.viewportWidth || this.element.clientWidth;
     const height = this.viewportHeight || this.element.clientHeight;
     if (!metrics?.width || !metrics.height || width <= 0 || height <= 0) return;
-    const cols = Math.max(2, Math.floor(width / metrics.width));
-    const rows = Math.max(1, Math.floor(height / metrics.height));
+    const cols = stableCellCount(width, metrics.width, this.terminal.cols, 2, this.viewportGridEstablished);
+    const rows = stableCellCount(height, metrics.height, this.terminal.rows, 1, this.viewportGridEstablished);
     if (cols !== this.terminal.cols || rows !== this.terminal.rows) {
       this.terminal.resize(cols, rows);
       this.linkDetector.invalidateCache();
     }
+    if (this.viewportWidth > 0 && this.viewportHeight > 0) this.viewportGridEstablished = true;
   }
 
   private emitMetrics(): void {
@@ -846,23 +874,23 @@ export class TerminalSession {
     return text.replace(/\n+$/, "");
   }
 
-  private sendResize(foreground = false, deduplicate = false): void {
+  private sendResize(foreground = false): void {
     const type = foreground ? "activate" : "resize";
-    const dimensions = {
+    const resize = {
       cols: Math.max(2, Math.floor(this.terminal.cols)),
       rows: Math.max(1, Math.floor(this.terminal.rows)),
+      foreground,
     };
-    if (deduplicate && sameDimensions(dimensions, this.lastSentDimensions)) return;
+    if (sameResize(resize, this.lastSentResize)) return;
     if (
       !this.sendSocketMessage({
         type,
-        ...dimensions,
-        foreground,
+        ...resize,
       })
     ) {
       return;
     }
-    this.lastSentDimensions = dimensions;
+    this.lastSentResize = resize;
   }
 
   private scheduleViewportResize(): void {
@@ -870,7 +898,7 @@ export class TerminalSession {
     this.clearViewportResizeTimer();
     this.viewportResizeTimer = window.setTimeout(() => {
       this.viewportResizeTimer = undefined;
-      this.sendResize(this.visible, true);
+      this.sendResize(this.visible);
     }, VIEWPORT_RESIZE_SETTLE_MS);
   }
 
@@ -915,7 +943,7 @@ export class TerminalSession {
   private closeSocket(): void {
     const socket = this.socket;
     this.socket = null;
-    this.lastSentDimensions = undefined;
+    this.lastSentResize = undefined;
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "wmux host reconnect");
   }
 
@@ -935,10 +963,38 @@ export class TerminalSession {
   }
 }
 
-const sameDimensions = (
-  first: { cols: number; rows: number },
-  second: { cols: number; rows: number } | undefined,
-): boolean => second !== undefined && first.cols === second.cols && first.rows === second.rows;
+const stableCellCount = (
+  pixels: number,
+  cellSize: number,
+  current: number,
+  minimum: number,
+  useHysteresis: boolean,
+): number => {
+  const target = Math.max(minimum, Math.floor(pixels / cellSize));
+  if (!useHysteresis || Math.abs(target - current) !== 1) return target;
+  const boundary = Math.max(target, current) * cellSize;
+  const margin = cellSize * CELL_BOUNDARY_HYSTERESIS;
+  if (target > current && pixels < boundary + margin) return current;
+  if (target < current && pixels > boundary - margin) return current;
+  return target;
+};
+
+const sameResize = (
+  first: { cols: number; rows: number; foreground: boolean },
+  second: { cols: number; rows: number; foreground: boolean } | undefined,
+): boolean =>
+  second !== undefined &&
+  first.cols === second.cols &&
+  first.rows === second.rows &&
+  first.foreground === second.foreground;
+
+const sameHostSettings = (first: HostSettings, second: HostSettings): boolean =>
+  first.terminalFontFamily === second.terminalFontFamily &&
+  first.terminalFontSize === second.terminalFontSize &&
+  first.terminalScrollbackRows === second.terminalScrollbackRows &&
+  first.colorScheme === second.colorScheme &&
+  first.tuiFrameRate === second.tuiFrameRate &&
+  first.terminalScrollMode === second.terminalScrollMode;
 
 const decodePaneServerMessage = (value: string, paneId: string): PaneServerMessage | null => {
   let parsed: unknown;

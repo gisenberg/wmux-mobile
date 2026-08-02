@@ -22,8 +22,17 @@ export class TerminalViewportCoordinator {
 
   update(viewport: TerminalViewport): void {
     if (this.disposed) return;
+    if (sameViewport(viewport, this.committed)) {
+      this.pending = undefined;
+      if (!this.transitionActive) this.cancelSettlingFrame();
+      return;
+    }
     this.pending = viewport;
-    if (!this.transitionActive && this.settlingFrame === undefined) this.flush();
+    if (this.committed === undefined && !this.transitionActive) {
+      this.flush();
+      return;
+    }
+    if (!this.transitionActive) this.scheduleSettledFlush();
   }
 
   activate(): void {
@@ -39,6 +48,10 @@ export class TerminalViewportCoordinator {
   endTransition(): void {
     if (this.disposed) return;
     this.transitionActive = false;
+    this.scheduleSettledFlush();
+  }
+
+  private scheduleSettledFlush(): void {
     this.cancelSettlingFrame();
     this.settlingFrame = this.scheduleFrame(() => {
       this.settlingFrame = this.scheduleFrame(() => {

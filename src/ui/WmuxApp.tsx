@@ -1040,12 +1040,6 @@ function Dashboard({
       onUpdateSettings={onUpdateSettings}
       surface={surface}
     >
-      {phase === "reconnecting" ? <ConnectionBanner phase={phase} /> : null}
-      {error ? (
-        <View style={styles.dashboardError}>
-          <InlineMessage message={error} tone="danger" />
-        </View>
-      ) : null}
       <View style={styles.surfaceStack}>
         {/* Keep both surfaces rendered; hiding the WebView can drop its native rendering layer. */}
         <View
@@ -1084,6 +1078,16 @@ function Dashboard({
             onSend={sendChatMessage}
           />
         </View>
+        {phase === "reconnecting" || error ? (
+          <View pointerEvents="none" style={styles.dashboardStatusOverlay}>
+            {phase === "reconnecting" ? <ConnectionBanner phase={phase} /> : null}
+            {error ? (
+              <View style={styles.dashboardError}>
+                <InlineMessage message={error} tone="danger" />
+              </View>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </WorkspaceChrome>
   );
@@ -1357,8 +1361,12 @@ function LiveTerminalCard({
             {...(metrics ? { metrics } : {})}
           />
         ) : null}
+        {paneIssue ? (
+          <Text pointerEvents="none" style={styles.terminalIssue}>
+            {paneIssue}
+          </Text>
+        ) : null}
       </View>
-      {paneIssue ? <Text style={styles.terminalIssue}>{paneIssue}</Text> : null}
     </View>
   );
 }
@@ -2176,12 +2184,20 @@ const styles = StyleSheet.create({
   },
   terminalIssue: {
     backgroundColor: "#30191a",
+    borderColor: "#633032",
+    borderRadius: 8,
+    borderWidth: 1,
+    bottom: 8,
     color: "#ff8d87",
     fontFamily: fonts.mono,
     fontSize: 10,
+    left: 8,
     lineHeight: 15,
     paddingHorizontal: 14,
     paddingVertical: 9,
+    position: "absolute",
+    right: 8,
+    zIndex: 9,
   },
   surfaceStack: {
     flex: 1,
@@ -2199,8 +2215,14 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   dashboardError: {
-    paddingHorizontal: 8,
-    paddingTop: 6,
+    padding: 8,
+  },
+  dashboardStatusOverlay: {
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    zIndex: 20,
   },
   clipboardToast: {
     alignItems: "center",

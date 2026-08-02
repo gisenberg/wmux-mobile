@@ -59,6 +59,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
   const [html, setHtml] = useState<string | null>(null);
   const [issue, setIssue] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [hostGeneration, setHostGeneration] = useState(0);
   const [viewport, setViewport] = useState<TerminalViewport>({ width: 0, height: 0 });
   const viewportCoordinator = useMemo(() => new TerminalViewportCoordinator(setViewport), []);
   const status: TerminalSurfaceStatus = issue ? "error" : !html ? "loading-asset" : ready ? "ready" : "loading-host";
@@ -154,12 +155,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       settings: session.settings,
     });
     post({ t: "attach", paneId: session.paneId });
-  }, [post, ready, session]);
-
-  useEffect(() => {
-    if (!active || !ready || !session) return;
-    post({ t: "show", paneId: session.paneId });
-  }, [active, post, ready, session]);
+  }, [hostGeneration, post, ready, session]);
 
   useEffect(() => {
     if (!active || !ready || !session || viewport.width <= 0 || viewport.height <= 0) return;
@@ -170,7 +166,12 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       heightPx: viewport.height,
       dpr: PixelRatio.get(),
     });
-  }, [active, post, ready, session, viewport.height, viewport.width]);
+  }, [active, hostGeneration, post, ready, session, viewport.height, viewport.width]);
+
+  useEffect(() => {
+    if (!active || !ready || !session) return;
+    post({ t: "show", paneId: session.paneId });
+  }, [active, hostGeneration, post, ready, session]);
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent): void => {
@@ -189,6 +190,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       }
       if (decoded.value.t === "ready") {
         setReady(true);
+        setHostGeneration((generation) => generation + 1);
         setIssue(null);
       }
       if (decoded.value.t === "link") {

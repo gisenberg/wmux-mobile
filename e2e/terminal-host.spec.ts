@@ -278,7 +278,7 @@ test("coalesces animated viewport changes before resizing the PTY", async ({ pag
   const paneId = "pane-animated-viewport";
   await initializePane(harness, paneId, 390, 600);
   const socket = await harness.socket(paneId);
-  await page.waitForTimeout(75);
+  await page.waitForTimeout(150);
   socket.received.splice(0);
 
   await page.evaluate(
@@ -295,7 +295,7 @@ test("coalesces animated viewport changes before resizing the PTY", async ({ pag
     },
   );
 
-  await page.waitForTimeout(75);
+  await page.waitForTimeout(150);
   expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toHaveLength(1);
   const snapshot = (await harness.snapshot()).sessions.find((session) => session.paneId === paneId);
   expect(socket.received.find((message) => message.type === "activate" || message.type === "resize")).toMatchObject({
@@ -331,11 +331,51 @@ test("does not resize the PTY for viewport changes within the current cell grid"
   expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toEqual([]);
 });
 
+test("holds the current grid through sub-cell layout jitter", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-jittering-viewport";
+  await initializePane(harness, paneId, 390, 600);
+  const socket = await harness.socket(paneId);
+  await page.waitForTimeout(150);
+  socket.received.splice(0);
+  const metrics = (await harness.messages()).findLast(
+    (message): message is Extract<ToNative, { t: "metrics" }> => message.t === "metrics" && message.paneId === paneId,
+  );
+  if (!metrics) throw new Error("Terminal metrics were not emitted");
+
+  await harness.dispatch({
+    t: "viewport",
+    paneId,
+    widthPx: metrics.cols * metrics.cellW - metrics.cellW * 0.1,
+    heightPx: metrics.rows * metrics.cellH - metrics.cellH * 0.1,
+    dpr: 1,
+  });
+  await page.waitForTimeout(150);
+
+  expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toEqual([]);
+});
+
+test("does not resize for unchanged settings or visual-only theme changes", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-visual-settings";
+  await initializePane(harness, paneId, 390, 600);
+  const socket = await harness.socket(paneId);
+  await page.waitForTimeout(150);
+  socket.received.splice(0);
+
+  await harness.dispatch({ t: "settings", settings });
+  await harness.dispatch({ t: "settings", settings: { ...settings, colorScheme: "nord" } });
+  await page.waitForTimeout(50);
+
+  expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toEqual([]);
+});
+
 test("claims PTY resize ownership without sending terminal bytes", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-resize-claim";
   await initializePane(harness, paneId, 390, 420);
   const socket = await harness.socket(paneId);
+  await page.waitForTimeout(150);
   socket.received.splice(0);
 
   await harness.dispatch({ t: "claimResize", paneId });
@@ -348,13 +388,7 @@ test("claims PTY resize ownership without sending terminal bytes", async ({ page
       ),
     )
     .toMatchObject({ type: "input", data: "", terminalResponse: true });
-  const claimIndex = socket.received.findIndex((message) => message.type === "input" && message.data === "");
-  expect(socket.received[claimIndex - 1]).toEqual({
-    type: "activate",
-    cols: expect.any(Number),
-    rows: expect.any(Number),
-    foreground: true,
-  });
+  expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toEqual([]);
   expect(inputPayloads(socket)).toEqual([""]);
 });
 
@@ -485,6 +519,9 @@ test("refreshes renderer state when the active pane is shown again", async ({ pa
   const priorMetrics = (await harness.messages()).filter(
     (message) => message.t === "metrics" && message.paneId === paneId,
   ).length;
+  const socket = await harness.socket(paneId);
+  await page.waitForTimeout(150);
+  socket.received.splice(0);
 
   await harness.dispatch({ t: "show", paneId });
 
@@ -494,6 +531,7 @@ test("refreshes renderer state when the active pane is shown again", async ({ pa
         (await harness.messages()).filter((message) => message.t === "metrics" && message.paneId === paneId).length,
     )
     .toBeGreaterThan(priorMetrics);
+  expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toEqual([]);
 });
 
 test("scrolls local Ghostty scrollback without pane input when mouse tracking is disabled", async ({ page }) => {

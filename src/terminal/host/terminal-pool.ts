@@ -38,6 +38,7 @@ export class TerminalPool {
       return;
     }
     if (message.t === "settings") {
+      if (sameHostSettings(this.settings, message.settings)) return;
       this.settings = message.settings;
       for (const session of this.sessions.values()) session.applySettings(message.settings);
       return;
@@ -81,12 +82,14 @@ export class TerminalPool {
   }
 
   private initialize(serverUrl: string, token: string, settings: HostSettings): void {
-    this.serverUrl = normalizeServerUrl(serverUrl);
+    const normalizedServerUrl = normalizeServerUrl(serverUrl);
+    const settingsChanged = !sameHostSettings(this.settings, settings);
+    this.serverUrl = normalizedServerUrl;
     this.token = token;
     this.settings = settings;
     for (const session of this.sessions.values()) {
-      session.updateConnection(this.serverUrl, token);
-      session.applySettings(settings);
+      session.updateConnection(normalizedServerUrl, token);
+      if (settingsChanged) session.applySettings(settings);
     }
   }
 
@@ -170,3 +173,12 @@ const normalizeServerUrl = (input: string): string => {
 
 const mostRecentPane = (recency: ReadonlyMap<string, number>): string | undefined =>
   [...recency.entries()].sort((first, second) => second[1] - first[1])[0]?.[0];
+
+const sameHostSettings = (first: HostSettings | undefined, second: HostSettings): boolean =>
+  first !== undefined &&
+  first.terminalFontFamily === second.terminalFontFamily &&
+  first.terminalFontSize === second.terminalFontSize &&
+  first.terminalScrollbackRows === second.terminalScrollbackRows &&
+  first.colorScheme === second.colorScheme &&
+  first.tuiFrameRate === second.tuiFrameRate &&
+  first.terminalScrollMode === second.terminalScrollMode;
