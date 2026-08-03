@@ -16,7 +16,9 @@ import { fonts } from "@/ui/theme";
 
 const runningFrames = ["|", "/", "-", "\\"] as const;
 
-export type WorkspaceAction = { type: "create-workspace"; machineId: string } | { type: "close-workspace" };
+export type WorkspaceAction =
+  | { type: "create-workspace"; machineId: string }
+  | { type: "close-workspace"; workspaceId: string; workspaceName: string };
 
 export type WorkspaceSurface = "chat" | "terminal";
 
@@ -114,7 +116,13 @@ export function WorkspaceChrome({
           accessibilityLabel={`Close ${navigation.workspace.name} workspace`}
           accessibilityRole="button"
           disabled={mutationBusy}
-          onPress={() => onAction({ type: "close-workspace" })}
+          onPress={() =>
+            onAction({
+              type: "close-workspace",
+              workspaceId: navigation.workspace.id,
+              workspaceName: navigation.workspace.name,
+            })
+          }
           style={({ pressed }) => [
             styles.squareButton,
             styles.closeWorkspaceButton,
@@ -137,6 +145,9 @@ export function WorkspaceChrome({
           onAction({ type: "create-workspace", machineId });
           setDrawerOpen(false);
         }}
+        onCloseWorkspace={(workspaceId, workspaceName) =>
+          onAction({ type: "close-workspace", workspaceId, workspaceName })
+        }
         onNavigate={(next) => {
           onNavigate(next);
           setDrawerOpen(false);
@@ -206,6 +217,7 @@ function WorkspaceDrawer({
   busy,
   navigation,
   onClose,
+  onCloseWorkspace,
   onCreateWorkspace,
   onNavigate,
   onOpenSettings,
@@ -216,6 +228,7 @@ function WorkspaceDrawer({
   busy: boolean;
   navigation: ResolvedNavigation;
   onClose: () => void;
+  onCloseWorkspace: (workspaceId: string, workspaceName: string) => void;
   onCreateWorkspace: (machineId: string) => void;
   onNavigate: (navigation: ResolvedNavigation) => void;
   onOpenSettings: () => void;
@@ -317,75 +330,92 @@ function WorkspaceDrawer({
                     active && { backgroundColor: theme.accentDim },
                   ]}
                 >
-                  <Pressable
-                    accessibilityLabel={[
-                      `${workspace.name} workspace`,
-                      signals.cwd || machineLabel,
-                      signals.agent && ["working", "waiting", "failed"].includes(signals.agent.state)
-                        ? `${signals.agent.name} ${signals.agent.status}`
-                        : "",
-                      signals.unreadCount > 0
-                        ? `${signals.unreadCount} unread ${signals.unreadCount === 1 ? "alert" : "alerts"}`
-                        : "",
-                    ]
-                      .filter(Boolean)
-                      .join(", ")}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                    onPress={() =>
-                      onNavigate({
-                        pane,
-                        selection: {
-                          paneId: pane.id,
-                          tabId: tab.id,
-                          workspaceId: workspace.id,
-                        },
-                        tab,
-                        workspace,
-                      })
-                    }
-                    style={({ pressed }) => [styles.drawerRow, pressed && styles.pressed]}
-                  >
-                    <Text style={[styles.drawerActiveMarker, { color: active ? theme.accent : theme.muted }]}>
-                      {active ? ">" : " "}
-                    </Text>
-                    <AgentStatusMarker
-                      agent={signals.agent}
-                      animationTick={animationTick}
-                      reachable={Boolean(machine?.reachable)}
-                      theme={theme}
-                    />
-                    <View style={styles.drawerRowCopy}>
-                      <View style={styles.drawerPrimaryRow}>
-                        <Text numberOfLines={1} style={[styles.drawerRowTitle, { color: theme.text }]}>
-                          {workspace.name}
-                        </Text>
-                        {signals.agent && ["working", "waiting", "failed"].includes(signals.agent.state) ? (
+                  <View style={styles.workspaceDrawerRow}>
+                    <Pressable
+                      accessibilityLabel={[
+                        `${workspace.name} workspace`,
+                        signals.cwd || machineLabel,
+                        signals.agent && ["working", "waiting", "failed"].includes(signals.agent.state)
+                          ? `${signals.agent.name} ${signals.agent.status}`
+                          : "",
+                        signals.unreadCount > 0
+                          ? `${signals.unreadCount} unread ${signals.unreadCount === 1 ? "alert" : "alerts"}`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join(", ")}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      onPress={() =>
+                        onNavigate({
+                          pane,
+                          selection: {
+                            paneId: pane.id,
+                            tabId: tab.id,
+                            workspaceId: workspace.id,
+                          },
+                          tab,
+                          workspace,
+                        })
+                      }
+                      style={({ pressed }) => [styles.drawerRow, pressed && styles.pressed]}
+                    >
+                      <Text style={[styles.drawerActiveMarker, { color: active ? theme.accent : theme.muted }]}>
+                        {active ? ">" : " "}
+                      </Text>
+                      <AgentStatusMarker
+                        agent={signals.agent}
+                        animationTick={animationTick}
+                        reachable={Boolean(machine?.reachable)}
+                        theme={theme}
+                      />
+                      <View style={styles.drawerRowCopy}>
+                        <View style={styles.drawerPrimaryRow}>
+                          <Text numberOfLines={1} style={[styles.drawerRowTitle, { color: theme.text }]}>
+                            {workspace.name}
+                          </Text>
+                          {signals.agent && ["working", "waiting", "failed"].includes(signals.agent.state) ? (
+                            <Text
+                              numberOfLines={1}
+                              style={[styles.agentLabel, { color: agentStateColor(signals.agent.state, theme) }]}
+                            >
+                              {signals.agent.name}
+                            </Text>
+                          ) : null}
+                          {signals.unreadCount > 0 ? <AlertBadge count={signals.unreadCount} theme={theme} /> : null}
+                        </View>
+                        <View style={styles.drawerMetaRow}>
                           <Text
+                            ellipsizeMode="middle"
                             numberOfLines={1}
-                            style={[styles.agentLabel, { color: agentStateColor(signals.agent.state, theme) }]}
+                            style={[styles.drawerCwd, { color: signals.cwd ? theme.muted : theme.faint }]}
                           >
-                            {signals.agent.name}
+                            {signals.cwd || machineLabel}
                           </Text>
-                        ) : null}
-                        {signals.unreadCount > 0 ? <AlertBadge count={signals.unreadCount} theme={theme} /> : null}
+                          {signals.cwd ? (
+                            <Text numberOfLines={1} style={[styles.drawerHost, { color: theme.faint }]}>
+                              @{machineLabel}
+                            </Text>
+                          ) : null}
+                        </View>
                       </View>
-                      <View style={styles.drawerMetaRow}>
-                        <Text
-                          ellipsizeMode="middle"
-                          numberOfLines={1}
-                          style={[styles.drawerCwd, { color: signals.cwd ? theme.muted : theme.faint }]}
-                        >
-                          {signals.cwd || machineLabel}
-                        </Text>
-                        {signals.cwd ? (
-                          <Text numberOfLines={1} style={[styles.drawerHost, { color: theme.faint }]}>
-                            @{machineLabel}
-                          </Text>
-                        ) : null}
-                      </View>
-                    </View>
-                  </Pressable>
+                    </Pressable>
+                    <Pressable
+                      accessibilityLabel={`Close ${workspace.name} workspace`}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: busy }}
+                      disabled={busy}
+                      onPress={() => onCloseWorkspace(workspace.id, workspace.name)}
+                      style={({ pressed }) => [
+                        styles.hostCreateButton,
+                        styles.drawerWorkspaceCloseButton,
+                        busy && styles.disabled,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.hostCreateGlyph, styles.drawerWorkspaceCloseGlyph]}>×</Text>
+                    </Pressable>
+                  </View>
                   {showPaneList ? (
                     <View style={[styles.paneList, { borderColor: theme.line }]}>
                       {workspace.tabs.flatMap((workspaceTab) =>
@@ -932,6 +962,11 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
   },
+  workspaceDrawerRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    paddingRight: 7,
+  },
   drawerRow: {
     alignItems: "center",
     flexDirection: "row",
@@ -939,6 +974,16 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 7,
     paddingVertical: 6,
+    flex: 1,
+  },
+  drawerWorkspaceCloseButton: {
+    backgroundColor: "#30191a",
+    borderColor: "#633032",
+  },
+  drawerWorkspaceCloseGlyph: {
+    color: "#ff8d87",
+    fontSize: 20,
+    lineHeight: 21,
   },
   drawerActiveMarker: {
     fontFamily: fonts.mono,

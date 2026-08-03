@@ -226,7 +226,7 @@ export function WmuxApp() {
           if (next) setNavigationPreference(next.selection);
           return;
         }
-        const result = await connection.mutate((client) => client.closeWorkspace(navigation.workspace.id));
+        const result = await connection.mutate((client) => client.closeWorkspace(action.workspaceId));
         const next = result ? resolveNavigation(result.state, navigation.selection) : null;
         setNavigationPreference(next?.selection ?? null);
       } finally {
@@ -242,7 +242,7 @@ export function WmuxApp() {
         void performWorkspaceAction(action);
         return;
       }
-      Alert.alert("Close workspace?", "The current workspace and its running sessions will be closed.", [
+      Alert.alert(`Close ${action.workspaceName}?`, "This workspace and its running sessions will be closed.", [
         { style: "cancel", text: "Cancel" },
         {
           onPress: () => void performWorkspaceAction(action),
