@@ -36,6 +36,11 @@ interface CellPoint {
   y: number;
 }
 
+interface TerminalGrid {
+  cols: number;
+  rows: number;
+}
+
 type PaneConnectionState = Extract<ToNative, { t: "pane" }>["state"];
 
 export interface TerminalSessionSnapshot {
@@ -81,6 +86,9 @@ export class TerminalSession {
   private viewportGridEstablished = false;
   private applyingViewport = false;
   private lastSentResize: { cols: number; rows: number; foreground: boolean } | undefined;
+  private proposedSize: TerminalGrid | undefined;
+  private authoritativeSize: TerminalGrid | undefined;
+  private resizeOwner = true;
   private selectionAnchor: CellPoint | undefined;
   private selectionRange: { start: CellPoint; end: CellPoint } | undefined;
   private replayGeneration = 0;
@@ -292,6 +300,9 @@ export class TerminalSession {
     this.clearReconnectTimer();
     this.clearViewportResizeTimer();
     this.closeSocket();
+    // A fresh attach re-establishes ownership; until then this viewport drives its own grid.
+    this.authoritativeSize = undefined;
+    this.resizeOwner = true;
     this.setPaneConnectionState("connecting");
     let socket: WebSocket;
     try {
@@ -418,6 +429,7 @@ export class TerminalSession {
     if (message.type === "ready") {
       this.exited = false;
       this.lastReplayKind = message.replayKind;
+      this.applyAuthoritativeSize(message);
       if (shouldWaitForDurableRefresh(message)) {
         this.beginDurableRefresh();
       } else {
@@ -426,6 +438,13 @@ export class TerminalSession {
       }
       this.emit({ t: "title", paneId: this.paneId, title: message.title });
       this.setPaneConnectionState("live");
+      return;
+    }
+    if (message.type === "size") {
+      this.clearSelection();
+      this.applyAuthoritativeSize(message);
+      this.emitMetrics();
+      this.emitCursor();
       return;
     }
     if (message.type === "output") {
@@ -634,11 +653,15 @@ export class TerminalSession {
     this.resizeClaimPending = false;
   }
 
-  private sendInput(data: string): void {
-    if (!data) return;
+  private clearSelection(): void {
     this.terminal.clearSelection();
     this.selectionAnchor = undefined;
     this.selectionRange = undefined;
+  }
+
+  private sendInput(data: string): void {
+    if (!data) return;
+    this.clearSelection();
     this.terminal.scrollToBottom();
     this.sendSocketMessage({ type: "input", data, terminalResponse: false });
   }
@@ -771,18 +794,42 @@ export class TerminalSession {
     return visibleTop + viewportRow;
   }
 
-  private fit(): void {
+  // The grid this viewport can display, independent of the size the server has settled on.
+  private proposedDimensions(): TerminalGrid | undefined {
     const metrics = this.terminal.renderer?.getMetrics();
     const width = this.viewportWidth || this.element.clientWidth;
     const height = this.viewportHeight || this.element.clientHeight;
-    if (!metrics?.width || !metrics.height || width <= 0 || height <= 0) return;
-    const cols = stableCellCount(width, metrics.width, this.terminal.cols, 2, this.viewportGridEstablished);
-    const rows = stableCellCount(height, metrics.height, this.terminal.rows, 1, this.viewportGridEstablished);
-    if (cols !== this.terminal.cols || rows !== this.terminal.rows) {
-      this.terminal.resize(cols, rows);
-      this.linkDetector.invalidateCache();
-    }
-    if (this.viewportWidth > 0 && this.viewportHeight > 0) this.viewportGridEstablished = true;
+    if (!metrics?.width || !metrics.height || width <= 0 || height <= 0) return undefined;
+    const previous = this.proposedSize ?? { cols: this.terminal.cols, rows: this.terminal.rows };
+    return {
+      cols: stableCellCount(width, metrics.width, previous.cols, 2, this.viewportGridEstablished),
+      rows: stableCellCount(height, metrics.height, previous.rows, 1, this.viewportGridEstablished),
+    };
+  }
+
+  private applyGrid(grid: TerminalGrid): void {
+    if (grid.cols === this.terminal.cols && grid.rows === this.terminal.rows) return;
+    this.terminal.resize(grid.cols, grid.rows);
+    this.linkDetector.invalidateCache();
+  }
+
+  private fit(): void {
+    const proposed = this.proposedDimensions();
+    if (proposed) this.proposedSize = proposed;
+    // Only a foreground resize owner drives the PTY; every other viewer follows the server's size.
+    const followsServer = this.authoritativeSize !== undefined && !(this.resizeOwner && this.visible);
+    const target = followsServer ? this.authoritativeSize : (proposed ?? this.authoritativeSize);
+    if (target) this.applyGrid(target);
+    if (proposed && this.viewportWidth > 0 && this.viewportHeight > 0) this.viewportGridEstablished = true;
+  }
+
+  private applyAuthoritativeSize(message: { cols: number; rows: number; resizeOwner: boolean }): void {
+    this.authoritativeSize = {
+      cols: Math.max(2, Math.floor(message.cols)),
+      rows: Math.max(1, Math.floor(message.rows)),
+    };
+    this.resizeOwner = message.resizeOwner;
+    this.fit();
   }
 
   private emitMetrics(): void {
@@ -876,9 +923,12 @@ export class TerminalSession {
 
   private sendResize(foreground = false): void {
     const type = foreground ? "activate" : "resize";
+    // Report what this viewport can display, not the grid the server may have clamped us to.
+    const grid = this.proposedSize ??
+      this.proposedDimensions() ?? { cols: this.terminal.cols, rows: this.terminal.rows };
     const resize = {
-      cols: Math.max(2, Math.floor(this.terminal.cols)),
-      rows: Math.max(1, Math.floor(this.terminal.rows)),
+      cols: Math.max(2, Math.floor(grid.cols)),
+      rows: Math.max(1, Math.floor(grid.rows)),
       foreground,
     };
     if (sameResize(resize, this.lastSentResize)) return;
@@ -919,8 +969,9 @@ export class TerminalSession {
     url.pathname = `/ws/panes/${encodeURIComponent(this.paneId)}`;
     url.search = "";
     url.searchParams.set("token", this.token);
-    url.searchParams.set("cols", String(Math.max(2, this.terminal.cols)));
-    url.searchParams.set("rows", String(Math.max(1, this.terminal.rows)));
+    const grid = this.proposedSize ?? { cols: this.terminal.cols, rows: this.terminal.rows };
+    url.searchParams.set("cols", String(Math.max(2, grid.cols)));
+    url.searchParams.set("rows", String(Math.max(1, grid.rows)));
     return url.toString();
   }
 
@@ -1032,6 +1083,11 @@ const decodePaneServerMessage = (value: string, paneId: string): PaneServerMessa
     return { type: "exit", paneId, code: parsed.code as number | null };
   }
   if (parsed.type === "removed") return { type: "removed", paneId };
+  if (parsed.type === "size") {
+    const grid = decodeGrid(parsed);
+    if (grid) return { type: "size", paneId, ...grid };
+    return null;
+  }
   if (
     parsed.type === "ready" &&
     Number.isInteger(parsed.pid) &&
@@ -1040,6 +1096,8 @@ const decodePaneServerMessage = (value: string, paneId: string): PaneServerMessa
     typeof parsed.replay === "string" &&
     (parsed.replayKind === "raw" || parsed.replayKind === "checkpoint")
   ) {
+    const grid = decodeGrid(parsed);
+    if (!grid) return null;
     return {
       type: "ready",
       paneId,
@@ -1048,13 +1106,18 @@ const decodePaneServerMessage = (value: string, paneId: string): PaneServerMessa
       status: parsed.status,
       replay: parsed.replay,
       replayKind: parsed.replayKind,
-      ...(typeof parsed.resizeOwner === "boolean" ? { resizeOwner: parsed.resizeOwner } : {}),
+      ...grid,
       ...(typeof parsed.outputOnly === "boolean" ? { outputOnly: parsed.outputOnly } : {}),
       ...(parsed.waitForRefresh === true ? { waitForRefresh: true } : {}),
     };
   }
   return null;
 };
+
+const decodeGrid = (parsed: Record<string, unknown>): { cols: number; rows: number; resizeOwner: boolean } | null =>
+  Number.isInteger(parsed.cols) && Number.isInteger(parsed.rows) && typeof parsed.resizeOwner === "boolean"
+    ? { cols: parsed.cols as number, rows: parsed.rows as number, resizeOwner: parsed.resizeOwner }
+    : null;
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

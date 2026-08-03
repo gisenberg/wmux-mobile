@@ -307,6 +307,45 @@ test("coalesces animated viewport changes before resizing the PTY", async ({ pag
   expect(inputPayloads(socket)).toEqual([]);
 });
 
+test("follows the server grid while another viewer owns the pane resize", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-follower";
+  await initializePane(harness, paneId, 640, 360);
+  const socket = await harness.socket(paneId);
+  await page.waitForTimeout(150);
+  const own = (await harness.snapshot()).sessions.find((session) => session.paneId === paneId);
+  if (!own) throw new Error("Pane session was not created");
+  expect(own.cols).toBeGreaterThan(40);
+
+  await harness.send(paneId, ready(paneId, "raw", "owned elsewhere\r\n", { cols: 40, rows: 10, resizeOwner: false }));
+  await expect
+    .poll(async () => {
+      const session = (await harness.snapshot()).sessions.find((candidate) => candidate.paneId === paneId);
+      return session && { cols: session.cols, rows: session.rows };
+    })
+    .toEqual({ cols: 40, rows: 10 });
+
+  await harness.send(paneId, { type: "size", paneId, cols: 50, rows: 12, resizeOwner: false });
+  await expect
+    .poll(async () => {
+      const session = (await harness.snapshot()).sessions.find((candidate) => candidate.paneId === paneId);
+      return session && { cols: session.cols, rows: session.rows };
+    })
+    .toEqual({ cols: 50, rows: 12 });
+
+  // Following the server must not distort what this viewport reports it can display.
+  socket.received.splice(0);
+  await harness.dispatch({ t: "viewport", paneId, widthPx: 640, heightPx: 300, dpr: 1 });
+  await expect
+    .poll(() => socket.received.find((message) => message.type === "activate" || message.type === "resize"))
+    .toMatchObject({ cols: own.cols });
+
+  await harness.send(paneId, { type: "size", paneId, cols: 50, rows: 12, resizeOwner: true });
+  await expect
+    .poll(async () => (await harness.snapshot()).sessions.find((candidate) => candidate.paneId === paneId)?.cols)
+    .toBe(own.cols);
+});
+
 test("does not resize the PTY for viewport changes within the current cell grid", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-equivalent-viewport";
@@ -1120,7 +1159,12 @@ const initializePane = async (harness: Harness, paneId: string, widthPx: number,
   await harness.socket(paneId);
 };
 
-const ready = (paneId: string, replayKind: "raw" | "checkpoint", replay: string): PaneServerMessage => ({
+const ready = (
+  paneId: string,
+  replayKind: "raw" | "checkpoint",
+  replay: string,
+  geometry: { cols: number; rows: number; resizeOwner: boolean } = { cols: 80, rows: 24, resizeOwner: true },
+): PaneServerMessage => ({
   type: "ready",
   paneId,
   pid: 100,
@@ -1128,6 +1172,7 @@ const ready = (paneId: string, replayKind: "raw" | "checkpoint", replay: string)
   status: "running",
   replay,
   replayKind,
+  ...geometry,
 });
 
 const inputPayloads = (socket: MockPaneSocket): string[] =>
