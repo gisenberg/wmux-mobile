@@ -35,6 +35,7 @@ import {
 import { TerminalInput, type TerminalInputHandle } from "@/input/TerminalInput";
 import { chromeTheme, normalizeTerminalColorScheme, type ChromeTheme } from "@/navigation/chrome-theme";
 import { navigationFixture } from "@/navigation/fixture";
+import { sameNavigationSelection } from "@/navigation/last-active";
 import { cycleTab, resolveNavigation, type NavigationSelection, type ResolvedNavigation } from "@/navigation/model";
 import { WorkspaceChrome, type WorkspaceAction, type WorkspaceSurface } from "@/navigation/WorkspaceChrome";
 import { type ConnectionPhase, useWmuxConnection } from "@/state/use-wmux-connection";
@@ -63,6 +64,7 @@ const busyPhases: ReadonlySet<ConnectionPhase> = new Set(["restoring", "probing"
 export function WmuxApp() {
   const connection = useWmuxConnection(defaultEndpoint);
   const markWorkspaceNotificationsRead = connection.markWorkspaceNotificationsRead;
+  const rememberNavigation = connection.rememberNavigation;
   const inputRef = useRef<TerminalInputHandle>(null);
   const inputTargetRef = useRef<"diagnostic" | "terminal" | null>(null);
   const terminalRef = useRef<TerminalSurfaceHandle>(null);
@@ -87,8 +89,8 @@ export function WmuxApp() {
   const dashboardPhase =
     connection.phase === "connected" || connection.phase === "reconnecting" ? connection.phase : null;
   const navigation = useMemo(
-    () => resolveNavigation(connection.bootstrap, navigationPreference),
-    [connection.bootstrap, navigationPreference],
+    () => resolveNavigation(connection.bootstrap, navigationPreference ?? connection.lastNavigation),
+    [connection.bootstrap, connection.lastNavigation, navigationPreference],
   );
   const activePaneId = navigation?.pane.id;
   const activeWorkspaceId = navigation?.workspace.id;
@@ -116,6 +118,11 @@ export function WmuxApp() {
     if (!activeWorkspaceId || !activeWorkspaceHasUnreadNotifications) return;
     void markWorkspaceNotificationsRead(activeWorkspaceId);
   }, [activeWorkspaceHasUnreadNotifications, activeWorkspaceId, markWorkspaceNotificationsRead]);
+
+  useEffect(() => {
+    if (!navigation || sameNavigationSelection(navigation.selection, connection.lastNavigation)) return;
+    void rememberNavigation(navigation.selection);
+  }, [connection.lastNavigation, navigation, rememberNavigation]);
 
   useEffect(
     () => () => {
@@ -213,6 +220,14 @@ export function WmuxApp() {
     await connection.useAccessToken(submittedToken);
   };
 
+  const navigateTo = useCallback(
+    (next: ResolvedNavigation): void => {
+      setNavigationPreference(next.selection);
+      void rememberNavigation(next.selection);
+    },
+    [rememberNavigation],
+  );
+
   const performWorkspaceAction = useCallback(
     async (action: WorkspaceAction): Promise<void> => {
       if (!navigation) return;
@@ -223,17 +238,22 @@ export function WmuxApp() {
             client.createWorkspace(action.machineId, navigation.pane.id),
           );
           const next = result ? resolveNavigation(result.state, { workspaceId: result.workspace.id }) : null;
-          if (next) setNavigationPreference(next.selection);
+          if (next) navigateTo(next);
           return;
         }
         const result = await connection.mutate((client) => client.closeWorkspace(navigation.workspace.id));
         const next = result ? resolveNavigation(result.state, navigation.selection) : null;
-        setNavigationPreference(next?.selection ?? null);
+        if (next) {
+          navigateTo(next);
+        } else {
+          setNavigationPreference(null);
+          void rememberNavigation(undefined);
+        }
       } finally {
         setMutationBusy(false);
       }
     },
-    [connection, navigation],
+    [connection, navigateTo, navigation, rememberNavigation],
   );
 
   const handleWorkspaceAction = useCallback(
@@ -292,10 +312,6 @@ export function WmuxApp() {
     },
     [activePaneId, showClipboardNotice],
   );
-
-  const navigateTo = useCallback((next: ResolvedNavigation): void => {
-    setNavigationPreference(next.selection);
-  }, []);
 
   const showDashboard =
     diagnosticsView === null && connection.bootstrap && dashboardPhase && navigation

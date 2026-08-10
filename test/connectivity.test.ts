@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { BootstrapPayload, EventStateDelta, TerminalNotification, WmuxSettings } from "../protocol/wmux";
+import type {
+  AgentInputRequest,
+  BootstrapPayload,
+  EventStateDelta,
+  TerminalNotification,
+  WmuxSettings,
+} from "../protocol/wmux";
 import {
   ProtocolMismatchError,
   WmuxApiClient,
@@ -23,6 +29,7 @@ const settings: WmuxSettings = {
   collapsedWorkspaceIds: [],
   colorScheme: "wmux",
   favoriteWorkspaceIds: [],
+  groupSidebarSessionsByHost: true,
   inactiveTabStreaming: "suspend",
   machineAliases: {},
   terminalFontSize: 14,
@@ -34,6 +41,7 @@ const settings: WmuxSettings = {
 const bootstrap = (revision = 1): BootstrapPayload => ({
   activeWorkspaceId: "",
   agentEvents: [],
+  agentInputRequests: [],
   agentTimelines: [],
   delegation: {
     notificationBudgetSeconds: { running: 7_200, waiting: 300 },
@@ -66,6 +74,29 @@ const notification = (id: string, title = "Done"): TerminalNotification => ({
   subtitle: "wmux",
   tabId: "tab-1",
   title,
+  workspaceId: "workspace-1",
+});
+
+const agentInputRequest = (id: string): AgentInputRequest => ({
+  createdAt: "2026-07-25T12:00:00.000Z",
+  generation: 1,
+  id,
+  openCodeRequestId: `request-${id}`,
+  openCodeSessionId: "session-1",
+  paneId: "pane-1",
+  questions: [
+    {
+      custom: false,
+      header: "Choice",
+      multiple: false,
+      options: [{ description: "Continue the task", label: "Continue" }],
+      question: "Continue?",
+    },
+  ],
+  sourceId: "source-1",
+  state: "pending",
+  tabId: "tab-1",
+  updatedAt: "2026-07-25T12:00:00.000Z",
   workspaceId: "workspace-1",
 });
 
@@ -329,11 +360,17 @@ test("event reducers apply compatible health, replace current snapshots, and de-
 test("event reducers apply sequential collection deltas without replacing unrelated state", () => {
   const initial = {
     ...bootstrap(2),
+    agentInputRequests: [agentInputRequest("input-1")],
     eventRevision: 4,
     notifications: [notification("n-1", "Old")],
   };
   const message = {
     baseEventRevision: 4,
+    agentInputRequests: {
+      order: ["input-2"],
+      removedIds: ["input-1"],
+      upserted: [agentInputRequest("input-2")],
+    },
     eventRevision: 5,
     healthEpoch: 1,
     notifications: {
@@ -350,6 +387,7 @@ test("event reducers apply sequential collection deltas without replacing unrela
   assert.equal(updated.eventRevision, 5);
   assert.equal(updated.revision, 3);
   assert.deepEqual(updated.notifications, [notification("n-2", "New")]);
+  assert.deepEqual(updated.agentInputRequests, [agentInputRequest("input-2")]);
   assert.equal(updated.workspaces, initial.workspaces);
   assert.equal(updated.settings, initial.settings);
 });

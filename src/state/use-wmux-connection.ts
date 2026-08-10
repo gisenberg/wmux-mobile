@@ -16,9 +16,11 @@ import {
   loadStoredConnection,
   storeAccessToken,
   storeEndpoint,
+  storeLastNavigation,
   storeSession,
 } from "@/auth/secure-connection";
 import { EventStream, type EventStreamStatus } from "@/events/event-stream";
+import type { NavigationSelection } from "@/navigation/model";
 import {
   applyEventMessage,
   bootstrapSatisfiesEventDelta,
@@ -47,11 +49,13 @@ export interface WmuxConnection {
   endpoint: string;
   error: string | null;
   forget: () => Promise<void>;
+  lastNavigation: NavigationSelection | undefined;
   markWorkspaceNotificationsRead: (workspaceId: string) => Promise<void>;
   mutate: <T extends WmuxStateMutationResult>(operation: (client: WmuxApiClient) => Promise<T>) => Promise<T | null>;
   phase: ConnectionPhase;
   probe: (input: string) => Promise<void>;
   protocolStatus: ProtocolStatus | null;
+  rememberNavigation: (selection: NavigationSelection | undefined) => Promise<void>;
   retry: () => Promise<void>;
   signIn: (username: string, password: string) => Promise<void>;
   terminalAccessToken: string | undefined;
@@ -77,6 +81,7 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
   const [clipboardHandoff, setClipboardHandoff] = useState<TerminalClipboard | null>(null);
   const [endpoint, setEndpoint] = useState(defaultEndpoint);
   const [error, setError] = useState<string | null>(null);
+  const [lastNavigation, setLastNavigation] = useState<NavigationSelection | undefined>();
   const [phase, setPhase] = useState<ConnectionPhase>("restoring");
   const [protocolStatus, setProtocolStatus] = useState<ProtocolStatus | null>(null);
   const [terminalAccessToken, setTerminalAccessToken] = useState<string | undefined>();
@@ -350,6 +355,7 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
         const saved = await storeEndpoint(baseUrl);
         setEndpoint(baseUrl);
         setAuthLoginEnabled(nextAuthInfo.loginEnabled);
+        setLastNavigation(saved.lastNavigation);
         setUsername(stored?.baseUrl === baseUrl ? (stored.username ?? "") : "");
 
         if (nextAuthInfo.authEnabled && !saved.token) {
@@ -414,6 +420,7 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
     setBootstrapState(null);
     setClipboardHandoff(null);
     setError(null);
+    setLastNavigation(undefined);
     setPhase("disconnected");
   }, []);
 
@@ -428,6 +435,20 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
   const retry = useCallback(async (): Promise<void> => {
     await probe(endpointRef.current || endpoint);
   }, [endpoint, probe]);
+
+  const rememberNavigation = useCallback(
+    async (selection: NavigationSelection | undefined): Promise<void> => {
+      const baseUrl = endpointRef.current || endpoint;
+      setLastNavigation(selection);
+      if (!baseUrl) return;
+      try {
+        await storeLastNavigation(baseUrl, selection);
+      } catch {
+        // Navigation remains usable when device-local persistence is unavailable.
+      }
+    },
+    [endpoint],
+  );
 
   const useAccessToken = useCallback(
     async (token: string): Promise<void> => {
@@ -461,6 +482,7 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
       if (!mountedRef.current) return;
       const initialEndpoint = stored?.baseUrl ?? defaultEndpoint;
       setEndpoint(initialEndpoint);
+      setLastNavigation(stored?.lastNavigation);
       setUsername(stored?.username ?? "");
       if (initialEndpoint) {
         await probe(initialEndpoint);
@@ -498,11 +520,13 @@ export const useWmuxConnection = (defaultEndpoint = ""): WmuxConnection => {
     endpoint,
     error,
     forget,
+    lastNavigation,
     markWorkspaceNotificationsRead,
     mutate,
     phase,
     probe,
     protocolStatus,
+    rememberNavigation,
     retry,
     signIn,
     terminalAccessToken,

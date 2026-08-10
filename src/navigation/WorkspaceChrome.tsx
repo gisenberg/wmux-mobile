@@ -12,6 +12,7 @@ import {
   type DrawerAgentSignal,
 } from "@/navigation/drawer-model";
 import type { ResolvedNavigation } from "@/navigation/model";
+import { drawerMachineName, drawerWorkspaceGroups, type DrawerWorkspaceRow } from "@/navigation/sidebar-model";
 import { fonts } from "@/ui/theme";
 
 const runningFrames = ["|", "/", "-", "\\"] as const;
@@ -224,11 +225,14 @@ function WorkspaceDrawer({
 }) {
   const insets = useSafeAreaInsets();
   const [animationTick, setAnimationTick] = useState(0);
-  const hasWorkingAgent = bootstrap.workspaces.some((workspace) => {
-    const tab = workspace.tabs.find((candidate) => candidate.id === workspace.activeTabId) ?? workspace.tabs[0];
-    const pane = tab?.panes.find((candidate) => candidate.id === tab.activePaneId) ?? tab?.panes[0];
-    return pane ? drawerWorkspaceSignals(bootstrap, workspace, pane).agent?.state === "working" : false;
-  });
+  const groupByHost = bootstrap.settings.groupSidebarSessionsByHost !== false;
+  const workspaceGroups = useMemo(
+    () => drawerWorkspaceGroups(bootstrap, navigation.workspace.id),
+    [bootstrap, navigation.workspace.id],
+  );
+  const hasWorkingAgent = workspaceGroups.some((group) =>
+    group.rows.some((row) => drawerWorkspaceSignals(bootstrap, row.workspace, row.pane).agent?.state === "working"),
+  );
 
   useEffect(() => {
     if (!open || !hasWorkingAgent) return;
@@ -262,23 +266,24 @@ function WorkspaceDrawer({
             <SheetCloseButton onPress={onClose} theme={theme} />
           </View>
           <ScrollView contentContainerStyle={styles.drawerList} showsVerticalScrollIndicator={false}>
-            <Text style={[styles.sectionLabel, { color: theme.muted }]}>HOSTS</Text>
+            <Text style={[styles.sectionLabel, { color: theme.muted }]}>SPACES</Text>
             <View style={styles.hostList}>
               {bootstrap.machines.map((machine) => {
                 const disabled = busy || !machine.reachable;
+                const machineName = drawerMachineName(bootstrap, machine.id);
                 return (
                   <View key={machine.id} style={[styles.hostRow, { borderColor: theme.line }]}>
                     <View style={[styles.hostDot, { backgroundColor: machine.reachable ? "#67d391" : "#ef7770" }]} />
                     <View style={styles.hostRowCopy}>
                       <Text numberOfLines={1} style={[styles.hostRowTitle, { color: theme.text }]}>
-                        {machine.name}
+                        {machineName}
                       </Text>
                       <Text numberOfLines={1} style={[styles.hostRowMeta, { color: theme.muted }]}>
                         {machine.reachable ? machine.kind : "offline"}
                       </Text>
                     </View>
                     <Pressable
-                      accessibilityLabel={`New workspace on ${machine.name}`}
+                      accessibilityLabel={`New workspace on ${machineName}`}
                       accessibilityRole="button"
                       accessibilityState={{ disabled }}
                       disabled={disabled}
@@ -296,157 +301,33 @@ function WorkspaceDrawer({
                 );
               })}
             </View>
-            <Text style={[styles.sectionLabel, styles.workspaceSectionLabel, { color: theme.muted }]}>WORKSPACES</Text>
-            {bootstrap.workspaces.map((workspace) => {
-              const active = workspace.id === navigation.workspace.id;
-              const tab =
-                workspace.tabs.find((candidate) => candidate.id === workspace.activeTabId) ?? workspace.tabs[0];
-              const pane = tab?.panes.find((candidate) => candidate.id === tab.activePaneId) ?? tab?.panes[0];
-              if (!tab || !pane) return null;
-              const machine = bootstrap.machines.find((candidate) => candidate.id === workspace.machineId);
-              const machineLabel = machine?.name ?? workspace.machineId;
-              const signals = drawerWorkspaceSignals(bootstrap, workspace, pane);
-              const paneCount = workspace.tabs.reduce((count, workspaceTab) => count + workspaceTab.panes.length, 0);
-              const showPaneList = workspace.tabs.length > 1 || paneCount > 1;
+            <Text style={[styles.sectionLabel, styles.workspaceSectionLabel, { color: theme.muted }]}>
+              {groupByHost ? "AGENTS" : "AGENT SESSIONS"}
+            </Text>
+            {workspaceGroups.map((group, groupIndex) => {
+              const machineLabel = group.machineId ? drawerMachineName(bootstrap, group.machineId) : undefined;
               return (
-                <View
-                  key={workspace.id}
-                  style={[
-                    styles.workspaceGroup,
-                    { borderColor: active ? theme.accent : theme.line },
-                    active && { backgroundColor: theme.accentDim },
-                  ]}
-                >
-                  <Pressable
-                    accessibilityLabel={[
-                      `${workspace.name} workspace`,
-                      signals.cwd || machineLabel,
-                      signals.agent && ["working", "waiting", "failed"].includes(signals.agent.state)
-                        ? `${signals.agent.name} ${signals.agent.status}`
-                        : "",
-                      signals.unreadCount > 0
-                        ? `${signals.unreadCount} unread ${signals.unreadCount === 1 ? "alert" : "alerts"}`
-                        : "",
-                    ]
-                      .filter(Boolean)
-                      .join(", ")}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                    onPress={() =>
-                      onNavigate({
-                        pane,
-                        selection: {
-                          paneId: pane.id,
-                          tabId: tab.id,
-                          workspaceId: workspace.id,
-                        },
-                        tab,
-                        workspace,
-                      })
-                    }
-                    style={({ pressed }) => [styles.drawerRow, pressed && styles.pressed]}
-                  >
-                    <Text style={[styles.drawerActiveMarker, { color: active ? theme.accent : theme.muted }]}>
-                      {active ? ">" : " "}
-                    </Text>
-                    <AgentStatusMarker
-                      agent={signals.agent}
-                      animationTick={animationTick}
-                      reachable={Boolean(machine?.reachable)}
-                      theme={theme}
-                    />
-                    <View style={styles.drawerRowCopy}>
-                      <View style={styles.drawerPrimaryRow}>
-                        <Text numberOfLines={1} style={[styles.drawerRowTitle, { color: theme.text }]}>
-                          {workspace.name}
-                        </Text>
-                        {signals.agent && ["working", "waiting", "failed"].includes(signals.agent.state) ? (
-                          <Text
-                            numberOfLines={1}
-                            style={[styles.agentLabel, { color: agentStateColor(signals.agent.state, theme) }]}
-                          >
-                            {signals.agent.name}
-                          </Text>
-                        ) : null}
-                        {signals.unreadCount > 0 ? <AlertBadge count={signals.unreadCount} theme={theme} /> : null}
-                      </View>
-                      <View style={styles.drawerMetaRow}>
-                        <Text
-                          ellipsizeMode="middle"
-                          numberOfLines={1}
-                          style={[styles.drawerCwd, { color: signals.cwd ? theme.muted : theme.faint }]}
-                        >
-                          {signals.cwd || machineLabel}
-                        </Text>
-                        {signals.cwd ? (
-                          <Text numberOfLines={1} style={[styles.drawerHost, { color: theme.faint }]}>
-                            @{machineLabel}
-                          </Text>
-                        ) : null}
-                      </View>
-                    </View>
-                  </Pressable>
-                  {showPaneList ? (
-                    <View style={[styles.paneList, { borderColor: theme.line }]}>
-                      {workspace.tabs.flatMap((workspaceTab) =>
-                        workspaceTab.panes.map((workspacePane, paneIndex) => {
-                          const paneActive = workspacePane.id === navigation.pane.id;
-                          const label = paneDrawerLabel(
-                            workspaceTab,
-                            workspacePane,
-                            paneIndex,
-                            workspace.tabs.length > 1,
-                          );
-                          const unreadCount = paneUnreadCount(bootstrap.notifications, workspacePane.id);
-                          return (
-                            <Pressable
-                              accessibilityLabel={[
-                                `${label} pane`,
-                                unreadCount > 0
-                                  ? `${unreadCount} unread ${unreadCount === 1 ? "alert" : "alerts"}`
-                                  : "",
-                              ]
-                                .filter(Boolean)
-                                .join(", ")}
-                              accessibilityRole="tab"
-                              accessibilityState={{ selected: paneActive }}
-                              key={`${workspaceTab.id}:${workspacePane.id}`}
-                              onPress={() =>
-                                onNavigate({
-                                  pane: workspacePane,
-                                  selection: {
-                                    paneId: workspacePane.id,
-                                    tabId: workspaceTab.id,
-                                    workspaceId: workspace.id,
-                                  },
-                                  tab: workspaceTab,
-                                  workspace,
-                                })
-                              }
-                              style={({ pressed }) => [
-                                styles.drawerPaneRow,
-                                paneActive && { backgroundColor: theme.canvas },
-                                pressed && styles.pressed,
-                              ]}
-                            >
-                              <Text
-                                style={[styles.drawerPaneMarker, { color: paneActive ? theme.accent : theme.faint }]}
-                              >
-                                {paneActive ? ">" : "·"}
-                              </Text>
-                              <Text
-                                numberOfLines={1}
-                                style={[styles.drawerPaneLabel, { color: paneActive ? theme.accent : theme.muted }]}
-                              >
-                                {label}
-                              </Text>
-                              {unreadCount > 0 ? <AlertBadge count={unreadCount} compact theme={theme} /> : null}
-                            </Pressable>
-                          );
-                        }),
-                      )}
+                <View key={group.machineId ?? `all-${groupIndex}`} style={styles.workspaceHostGroup}>
+                  {groupByHost && group.machineId ? (
+                    <View style={[styles.workspaceHostHeader, { borderColor: theme.line }]}>
+                      <Text numberOfLines={1} style={[styles.workspaceHostTitle, { color: theme.muted }]}>
+                        {machineLabel?.toUpperCase()}
+                      </Text>
+                      <Text style={[styles.workspaceHostCount, { color: theme.faint }]}>{group.rows.length}</Text>
                     </View>
                   ) : null}
+                  {group.rows.map((row) => (
+                    <DrawerWorkspaceItem
+                      animationTick={animationTick}
+                      bootstrap={bootstrap}
+                      groupedByHost={groupByHost}
+                      key={row.workspace.id}
+                      navigation={navigation}
+                      onNavigate={onNavigate}
+                      row={row}
+                      theme={theme}
+                    />
+                  ))}
                 </View>
               );
             })}
@@ -469,6 +350,167 @@ function WorkspaceDrawer({
         </View>
       </SafeAreaView>
     </Modal>
+  );
+}
+
+function DrawerWorkspaceItem({
+  animationTick,
+  bootstrap,
+  groupedByHost,
+  navigation,
+  onNavigate,
+  row,
+  theme,
+}: {
+  animationTick: number;
+  bootstrap: BootstrapPayload;
+  groupedByHost: boolean;
+  navigation: ResolvedNavigation;
+  onNavigate: (navigation: ResolvedNavigation) => void;
+  row: DrawerWorkspaceRow;
+  theme: ChromeTheme;
+}) {
+  const { pane, tab, workspace } = row;
+  const active = workspace.id === navigation.workspace.id;
+  const machine = bootstrap.machines.find((candidate) => candidate.id === row.machineId);
+  const machineLabel = drawerMachineName(bootstrap, row.machineId);
+  const signals = drawerWorkspaceSignals(bootstrap, workspace, pane);
+  const paneCount = workspace.tabs.reduce((count, workspaceTab) => count + workspaceTab.panes.length, 0);
+  const showPaneList = workspace.tabs.length > 1 || paneCount > 1;
+  const indent = Math.min(row.depth, 3) * 9;
+
+  return (
+    <View
+      style={[
+        styles.workspaceGroup,
+        { borderColor: active ? theme.accent : theme.line, marginLeft: indent },
+        active && { backgroundColor: theme.accentDim },
+      ]}
+    >
+      <Pressable
+        accessibilityLabel={[
+          `${workspace.name} workspace`,
+          signals.cwd || machineLabel,
+          row.favorite ? "favorite" : "",
+          signals.agent && ["working", "waiting", "failed"].includes(signals.agent.state)
+            ? `${signals.agent.name} ${signals.agent.status}`
+            : "",
+          signals.unreadCount > 0
+            ? `${signals.unreadCount} unread ${signals.unreadCount === 1 ? "alert" : "alerts"}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(", ")}
+        accessibilityRole="button"
+        accessibilityState={{ selected: active }}
+        onPress={() =>
+          onNavigate({
+            pane,
+            selection: {
+              paneId: pane.id,
+              tabId: tab.id,
+              workspaceId: workspace.id,
+            },
+            tab,
+            workspace,
+          })
+        }
+        style={({ pressed }) => [styles.drawerRow, pressed && styles.pressed]}
+      >
+        <Text style={[styles.drawerActiveMarker, { color: active ? theme.accent : theme.muted }]}>
+          {active ? ">" : " "}
+        </Text>
+        <AgentStatusMarker
+          agent={signals.agent}
+          animationTick={animationTick}
+          reachable={Boolean(machine?.reachable)}
+          theme={theme}
+        />
+        <View style={styles.drawerRowCopy}>
+          <View style={styles.drawerPrimaryRow}>
+            {row.favorite ? <Text style={[styles.favoriteMarker, { color: theme.accent }]}>★</Text> : null}
+            <Text numberOfLines={1} style={[styles.drawerRowTitle, { color: theme.text }]}>
+              {workspace.name}
+            </Text>
+            {signals.agent && ["working", "waiting", "failed"].includes(signals.agent.state) ? (
+              <Text
+                numberOfLines={1}
+                style={[styles.agentLabel, { color: agentStateColor(signals.agent.state, theme) }]}
+              >
+                {signals.agent.name}
+              </Text>
+            ) : null}
+            {signals.unreadCount > 0 ? <AlertBadge count={signals.unreadCount} theme={theme} /> : null}
+          </View>
+          <View style={styles.drawerMetaRow}>
+            <Text
+              ellipsizeMode="middle"
+              numberOfLines={1}
+              style={[styles.drawerCwd, { color: signals.cwd ? theme.muted : theme.faint }]}
+            >
+              {signals.cwd || machineLabel}
+            </Text>
+            {signals.cwd && !groupedByHost ? (
+              <Text numberOfLines={1} style={[styles.drawerHost, { color: theme.faint }]}>
+                @{machineLabel}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+      </Pressable>
+      {showPaneList ? (
+        <View style={[styles.paneList, { borderColor: theme.line }]}>
+          {workspace.tabs.flatMap((workspaceTab) =>
+            workspaceTab.panes.map((workspacePane, paneIndex) => {
+              const paneActive = workspacePane.id === navigation.pane.id;
+              const label = paneDrawerLabel(workspaceTab, workspacePane, paneIndex, workspace.tabs.length > 1);
+              const unreadCount = paneUnreadCount(bootstrap.notifications, workspacePane.id);
+              return (
+                <Pressable
+                  accessibilityLabel={[
+                    `${label} pane`,
+                    unreadCount > 0 ? `${unreadCount} unread ${unreadCount === 1 ? "alert" : "alerts"}` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(", ")}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: paneActive }}
+                  key={`${workspaceTab.id}:${workspacePane.id}`}
+                  onPress={() =>
+                    onNavigate({
+                      pane: workspacePane,
+                      selection: {
+                        paneId: workspacePane.id,
+                        tabId: workspaceTab.id,
+                        workspaceId: workspace.id,
+                      },
+                      tab: workspaceTab,
+                      workspace,
+                    })
+                  }
+                  style={({ pressed }) => [
+                    styles.drawerPaneRow,
+                    paneActive && { backgroundColor: theme.canvas },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={[styles.drawerPaneMarker, { color: paneActive ? theme.accent : theme.faint }]}>
+                    {paneActive ? ">" : "·"}
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.drawerPaneLabel, { color: paneActive ? theme.accent : theme.muted }]}
+                  >
+                    {label}
+                  </Text>
+                  {unreadCount > 0 ? <AlertBadge count={unreadCount} compact theme={theme} /> : null}
+                </Pressable>
+              );
+            }),
+          )}
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -602,6 +644,21 @@ function WorkspaceSettingsSheet({
                 );
               })}
             </ScrollView>
+            <Text style={[styles.sectionLabel, { color: draftTheme.muted }]}>SIDEBAR</Text>
+            <View style={styles.segmentedRow}>
+              <SettingsChoice
+                active={draft.groupSidebarSessionsByHost !== false}
+                label="Group by host"
+                onPress={() => setDraft((current) => ({ ...current, groupSidebarSessionsByHost: true }))}
+                theme={draftTheme}
+              />
+              <SettingsChoice
+                active={draft.groupSidebarSessionsByHost === false}
+                label="Single list"
+                onPress={() => setDraft((current) => ({ ...current, groupSidebarSessionsByHost: false }))}
+                theme={draftTheme}
+              />
+            </View>
             <SettingsStepper
               label="Font size"
               onDecrease={() =>
@@ -927,6 +984,27 @@ const styles = StyleSheet.create({
   workspaceSectionLabel: {
     marginTop: 7,
   },
+  workspaceHostGroup: {
+    gap: 4,
+  },
+  workspaceHostHeader: {
+    alignItems: "center",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    minHeight: 24,
+    paddingHorizontal: 5,
+  },
+  workspaceHostTitle: {
+    flex: 1,
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    fontWeight: "800",
+  },
+  workspaceHostCount: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    fontWeight: "700",
+  },
   workspaceGroup: {
     borderRadius: 7,
     borderWidth: StyleSheet.hairlineWidth,
@@ -962,6 +1040,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: 6,
+  },
+  favoriteMarker: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    fontWeight: "800",
   },
   drawerRowTitle: {
     flex: 1,

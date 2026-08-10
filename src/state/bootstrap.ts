@@ -114,6 +114,15 @@ export const applyEventMessage = (current: BootstrapPayload, message: EventServe
           }
         : {}),
       ...(message.runs ? { runs: applyCollectionDelta(current.runs, message.runs, (run) => run.id) } : {}),
+      ...(message.agentInputRequests
+        ? {
+            agentInputRequests: applyCollectionDelta(
+              current.agentInputRequests,
+              message.agentInputRequests,
+              (request) => request.id,
+            ),
+          }
+        : {}),
       ...(message.settings ? { settings: message.settings } : {}),
     };
   }

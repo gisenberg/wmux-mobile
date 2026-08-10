@@ -61,6 +61,7 @@ const fixtureSettings: BootstrapPayload["settings"] = {
   collapsedWorkspaceIds: [],
   colorScheme: "wmux",
   favoriteWorkspaceIds: [],
+  groupSidebarSessionsByHost: true,
   inactiveTabStreaming: "suspend",
   machineAliases: {},
   terminalFontSize: 14,
@@ -72,6 +73,7 @@ const fixtureSettings: BootstrapPayload["settings"] = {
 export const navigationFixture: BootstrapPayload = {
   activeWorkspaceId: "workspace-project",
   agentEvents: [],
+  agentInputRequests: [],
   agentTimelines: [],
   delegation: {
     notificationBudgetSeconds: { running: 7_200, waiting: 300 },
