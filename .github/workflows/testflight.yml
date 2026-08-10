@@ -66,7 +66,7 @@ jobs:
 
       - name: Archive the application
         run: |
-          rtk xcodebuild \
+          rtk caffeinate -dimsu rtk xcodebuild \
             -workspace ios/wmux.xcworkspace \
             -scheme wmux \
             -configuration Release \
@@ -98,7 +98,7 @@ jobs:
 
       - name: Export the signed IPA
         run: |
-          rtk xcodebuild \
+          rtk caffeinate -dimsu rtk xcodebuild \
             -exportArchive \
             -quiet \
             -archivePath "$RUNNER_TEMP/testflight-archive.xcarchive" \
@@ -112,7 +112,7 @@ jobs:
       - name: Upload to TestFlight
         working-directory: ${{ runner.temp }}
         run: |
-          rtk /Applications/Transporter.app/Contents/itms/bin/iTMSTransporter \
+          rtk caffeinate -dimsu rtk /Applications/Transporter.app/Contents/itms/bin/iTMSTransporter \
             -m upload \
             -apiIssuer "$ASC_API_KEY_ISSUER_ID" \
             -apiKey "$ASC_API_KEY_ID" \

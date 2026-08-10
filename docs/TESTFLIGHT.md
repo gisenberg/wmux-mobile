@@ -23,6 +23,7 @@ The workflow selects a self-hosted runner with the standard `self-hosted`, `macO
 The runner needs Xcode, CocoaPods, Apple Transporter, Node.js bootstrap access, RTK, an Apple Distribution identity for the configured team, and network access to npm, CocoaPods, GitHub, and Apple.
 The runner process must share the logged-in user security session so `codesign` can access the signing identity's private key.
 A background launch session without signing-key access fails embedded-framework signing with `errSecInternalComponent`.
+The archive, export, and upload commands run under `caffeinate` so a display-idle system sleep cannot expire the GitHub job lease mid-release.
 
 The App Store provisioning profile is created or refreshed by Xcode automatic signing through the App Store Connect API key.
 The runner registration is repository-scoped, so the shared Mac uses a separate runner service for each GitHub repository.
