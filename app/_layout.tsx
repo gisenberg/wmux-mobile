@@ -13,6 +13,7 @@ export default function RootLayout() {
         <Stack
           screenOptions={{
             animation: "none",
+            gestureEnabled: false,
             contentStyle: { backgroundColor: colors.canvas },
             headerShown: false,
           }}

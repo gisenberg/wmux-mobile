@@ -477,13 +477,13 @@ test("clears native mouse tracking state when replay reset has no tracking mode"
     .toMatchObject({ active: false });
 });
 
-test("re-emits mouse tracking when a pooled pane becomes visible again", async ({ page }) => {
+test("re-emits TUI gesture modes when a pooled pane becomes visible again", async ({ page }) => {
   const harness = await openHarness(page);
   const paneA = "pane-tracked";
   const paneB = "pane-background";
   await initializePane(harness, paneA, 640, 360);
   const socketA = await harness.socket(paneA);
-  await harness.send(paneA, ready(paneA, "raw", "\x1b[?1000h\x1b[?1006h"));
+  await harness.send(paneA, ready(paneA, "raw", "\x1b[?1049h\x1b[?1000h\x1b[?1006h"));
   await expect
     .poll(async () =>
       (await harness.messages()).findLast((message) => message.t === "mouseTracking" && message.paneId === paneA),
@@ -497,7 +497,15 @@ test("re-emits mouse tracking when a pooled pane becomes visible again", async (
   await harness.dispatch({ t: "show", paneId: paneB });
   await harness.dispatch({ t: "viewport", paneId: paneB, widthPx: 640, heightPx: 360, dpr: 1 });
   await harness.socket(paneB);
+  expect((await harness.messages()).findLast((message) => message.t === "altScreen")).toMatchObject({
+    paneId: paneB,
+    active: false,
+  });
   await harness.dispatch({ t: "show", paneId: paneA });
+  expect((await harness.messages()).findLast((message) => message.t === "altScreen")).toMatchObject({
+    paneId: paneA,
+    active: true,
+  });
   await expect
     .poll(
       async () =>
@@ -544,7 +552,7 @@ test("re-emits live connection state when a pooled pane becomes visible again", 
     .toBe(2);
 });
 
-test("refreshes renderer state when the active pane is shown again", async ({ page }) => {
+test("refreshes a shown pane without repeating unchanged geometry across the bridge", async ({ page }) => {
   const harness = await openHarness(page);
   const paneId = "pane-reshown";
   await initializePane(harness, paneId, 640, 360);
@@ -555,6 +563,7 @@ test("refreshes renderer state when the active pane is shown again", async ({ pa
         (await harness.messages()).filter((message) => message.t === "metrics" && message.paneId === paneId).length,
     )
     .toBeGreaterThan(0);
+  await page.waitForTimeout(150);
   const priorMetrics = (await harness.messages()).filter(
     (message) => message.t === "metrics" && message.paneId === paneId,
   ).length;
@@ -564,13 +573,71 @@ test("refreshes renderer state when the active pane is shown again", async ({ pa
 
   await harness.dispatch({ t: "show", paneId });
 
-  await expect
-    .poll(
-      async () =>
-        (await harness.messages()).filter((message) => message.t === "metrics" && message.paneId === paneId).length,
-    )
-    .toBeGreaterThan(priorMetrics);
+  await page.waitForTimeout(150);
+  expect(
+    (await harness.messages()).filter((message) => message.t === "metrics" && message.paneId === paneId),
+  ).toHaveLength(priorMetrics);
   expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toEqual([]);
+});
+
+test("stationary cursor output does not flood the native bridge or resize the pane", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-stationary-cursor";
+  await initializePane(harness, paneId, 640, 360);
+  await harness.send(paneId, ready(paneId, "raw", "\x1b[Hready\r"));
+  await page.waitForTimeout(200);
+  const geometry = () =>
+    harness
+      .messages()
+      .then((messages) => messages.filter((message) => message.t === "cursor" || message.t === "metrics"));
+  const before = await geometry();
+  const socket = await harness.socket(paneId);
+  socket.received.splice(0);
+  for (let index = 0; index < 12; index++) {
+    await harness.dispatch({ t: "text", paneId, data: "x" });
+    await harness.send(paneId, { type: "output", paneId, data: "\x1b[Hupdated\r" });
+    await page.waitForTimeout(20);
+  }
+  await page.waitForTimeout(100);
+  expect(await geometry()).toEqual(before);
+  expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toEqual([]);
+  expect(inputPayloads(socket)).toEqual(Array(12).fill("x"));
+});
+
+test("chunked replay keeps the last painted frame covered until the final redraw", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-chunked-replay";
+  await initializePane(harness, paneId, 640, 360);
+  await harness.send(paneId, ready(paneId, "raw", "\x1b[Hprevious screen\r\n"));
+  const terminal = page.locator(`.terminal-session[data-pane-id="${paneId}"]`);
+  await expect(terminal.locator(".terminal-replay-cover")).toHaveCount(0);
+  await expect.poll(async () => (await harness.snapshot()).sessions[0]?.lines.join("\n")).toContain("previous screen");
+  const before = await terminal.locator("canvas").screenshot();
+  await page.evaluate(() => {
+    const original = window.setTimeout;
+    const queued: (() => void)[] = [];
+    window.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (delay === 0 && typeof callback === "function") {
+        queued.push(() => callback(...args));
+        return -1;
+      }
+      return original(callback, delay, ...args);
+    }) as typeof window.setTimeout;
+    (window as typeof window & { finishReplay: () => void }).finishReplay = () => {
+      window.setTimeout = original;
+      queued.forEach((callback) => callback());
+    };
+  });
+  await harness.send(
+    paneId,
+    ready(paneId, "raw", "\x1b[2J\x1b[H" + "replay line\r\n".repeat(25_000) + "finished replay"),
+  );
+  const cover = terminal.locator(".terminal-replay-cover");
+  await expect(cover).toHaveCount(1);
+  expect(Buffer.compare(await cover.screenshot(), before)).toBe(0);
+  await page.evaluate(() => (window as typeof window & { finishReplay: () => void }).finishReplay());
+  await expect(cover).toHaveCount(0);
+  await expect.poll(async () => (await harness.snapshot()).sessions[0]?.lines.join("\n")).toContain("finished replay");
 });
 
 test("scrolls local Ghostty scrollback without pane input when mouse tracking is disabled", async ({ page }) => {
