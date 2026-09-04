@@ -49,12 +49,12 @@ jobs:
 
       - name: Prepare persistent build caches
         run: |
-          rtk mkdir -p "$HOME/.cache/wmux-mobile-android/gradle"
-          rtk mkdir -p "$HOME/.cache/wmux-mobile-android/npm"
+          mkdir -p "$HOME/.cache/wmux-mobile-android/gradle"
+          mkdir -p "$HOME/.cache/wmux-mobile-android/npm"
 
       - name: Build the pinned Android toolchain image
         run: |
-          rtk docker build \
+          docker build \
             --file docker/android/Dockerfile \
             --tag "$ANDROID_IMAGE" \
             docker/android
@@ -63,16 +63,15 @@ jobs:
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          rtk docker run --rm \
+          docker run --rm \
             --env ANDROID_KEYSTORE_BASE64 \
             --env GITHUB_ENV \
             --env RUNNER_TEMP \
             --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace" \
             --mount "type=bind,source=$RUNNER_TEMP,target=$RUNNER_TEMP" \
-            --mount "type=bind,source=$(rtk which rtk),target=/usr/local/bin/rtk,readonly" \
             --workdir /workspace \
             "$ANDROID_IMAGE" \
-            rtk node scripts/ci/prepare-android-signing.mjs
+            node scripts/ci/prepare-android-signing.mjs
 
       - name: Build the standalone APK
         env:
@@ -80,7 +79,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          rtk docker run --rm \
+          docker run --rm \
             --env ANDROID_KEY_ALIAS \
             --env ANDROID_KEY_PASSWORD \
             --env ANDROID_KEYSTORE_PASSWORD \
@@ -94,7 +93,6 @@ jobs:
             --mount "type=bind,source=$HOME/.cache/wmux-mobile-android/gradle,target=/home/node/.gradle" \
             --mount "type=bind,source=$HOME/.cache/wmux-mobile-android/npm,target=/home/node/.npm" \
             --mount "type=bind,source=$ANDROID_KEYSTORE_PATH,target=/run/secrets/wmux-mobile-release.p12,readonly" \
-            --mount "type=bind,source=$(rtk which rtk),target=/usr/local/bin/rtk,readonly" \
             --workdir /workspace \
             "$ANDROID_IMAGE" \
             scripts/ci/build-android.sh
@@ -103,7 +101,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          rtk docker run --rm \
+          docker run --rm \
             --env ANDROID_VERSION_CODE \
             --env GITHUB_API_URL \
             --env GITHUB_REF_NAME \
@@ -115,21 +113,19 @@ jobs:
             --env GITHUB_TOKEN \
             --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace" \
             --mount "type=bind,source=$RUNNER_TEMP,target=$RUNNER_TEMP" \
-            --mount "type=bind,source=$(rtk which rtk),target=/usr/local/bin/rtk,readonly" \
             --workdir /workspace \
             "$ANDROID_IMAGE" \
-            rtk node \
+            node \
               scripts/ci/publish-android-release.mjs \
               android/app/build/outputs/apk/release/output-metadata.json
 
       - name: Remove the temporary Android signing key
         if: always() && env.ANDROID_KEYSTORE_PATH != ''
         run: |
-          rtk docker run --rm \
+          docker run --rm \
             --env ANDROID_KEYSTORE_PATH \
             --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace" \
             --mount "type=bind,source=$RUNNER_TEMP,target=$RUNNER_TEMP" \
-            --mount "type=bind,source=$(rtk which rtk),target=/usr/local/bin/rtk,readonly" \
             --workdir /workspace \
             "$ANDROID_IMAGE" \
-            rtk node scripts/ci/cleanup-android-signing.mjs
+            node scripts/ci/cleanup-android-signing.mjs
