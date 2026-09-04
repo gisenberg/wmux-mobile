@@ -5,6 +5,7 @@ import { createServer, type ViteDevServer } from "vite";
 import { DEFAULT_TERMINAL_FONT_FAMILY, type PaneClientMessage, type PaneServerMessage } from "../protocol/wmux";
 import type { HostSettings, ToHost, ToNative } from "../src/terminal/bridge";
 import type { TerminalPoolSnapshot } from "../src/terminal/host/terminal-pool";
+import { TerminalViewportCoordinator } from "../src/terminal/viewport-coordinator";
 
 const settings: HostSettings = {
   terminalFontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
@@ -305,6 +306,63 @@ test("coalesces animated viewport changes before resizing the PTY", async ({ pag
     foreground: true,
   });
   expect(inputPayloads(socket)).toEqual([]);
+});
+
+test("swipe typing never forwards keyboard candidate height changes to the PTY", async ({ page }) => {
+  const harness = await openHarness(page);
+  const paneId = "pane-stable-keyboard";
+  await initializePane(harness, paneId, 390, 600);
+  await harness.send(paneId, ready(paneId, "raw", "stable prompt> "));
+  const frames = new Map<number, FrameRequestCallback>();
+  let handle = 0;
+  let dispatched = Promise.resolve();
+  const coordinator = new TerminalViewportCoordinator(
+    (viewport) => {
+      dispatched = dispatched.then(() =>
+        harness.dispatch({ t: "viewport", paneId, widthPx: viewport.width, heightPx: viewport.height, dpr: 1 }),
+      );
+    },
+    (callback) => {
+      frames.set(++handle, callback);
+      return handle;
+    },
+    (id) => {
+      frames.delete(id);
+    },
+  );
+  const settle = async () => {
+    for (let index = 0; index < 2; index++) {
+      const queued = [...frames.values()];
+      frames.clear();
+      queued.forEach((callback) => callback(0));
+    }
+    await dispatched;
+  };
+  coordinator.update({ width: 390, height: 600 });
+  coordinator.setInputFocused(true);
+  coordinator.beginTransition();
+  coordinator.update({ width: 390, height: 360 });
+  coordinator.endTransition(300);
+  await settle();
+  await page.waitForTimeout(200);
+  const before = (await harness.snapshot()).sessions[0]!;
+  const socket = await harness.socket(paneId);
+  socket.received.splice(0);
+  for (const height of [316, 360, 600, 316, 360]) {
+    coordinator.beginTransition();
+    coordinator.update({ width: 390, height });
+    coordinator.endTransition(height === 600 ? 0 : 660 - height);
+    await settle();
+    await harness.dispatch({ t: "text", paneId, data: "word " });
+    await harness.send(paneId, { type: "output", paneId, data: "word " });
+  }
+  await page.waitForTimeout(200);
+  const after = (await harness.snapshot()).sessions[0]!;
+  expect({ cols: after.cols, rows: after.rows }).toEqual({ cols: before.cols, rows: before.rows });
+  expect(after.lines.join("\n")).toContain("stable prompt>");
+  expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toEqual([]);
+  expect(inputPayloads(socket)).toEqual(Array(5).fill("word "));
+  coordinator.dispose();
 });
 
 test("follows the server grid while another viewer owns the pane resize", async ({ page }) => {

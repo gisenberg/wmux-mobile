@@ -13,7 +13,6 @@ import {
   TextInput,
   useWindowDimensions,
   View,
-  type LayoutChangeEvent,
 } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -331,6 +330,7 @@ export function WmuxApp() {
       >
         {showDashboard ? (
           <Dashboard
+            inputFocused={inputFocused}
             accessToken={connection.terminalAccessToken}
             bootstrap={showDashboard.bootstrap}
             endpoint={connection.endpoint}
@@ -975,6 +975,7 @@ function AuthenticationCard(props: AuthenticationCardProps) {
 }
 
 interface DashboardProps {
+  inputFocused: boolean;
   accessToken: string | undefined;
   bootstrap: BootstrapPayload;
   endpoint: string;
@@ -995,6 +996,7 @@ interface DashboardProps {
 }
 
 function Dashboard({
+  inputFocused,
   accessToken,
   bootstrap,
   endpoint,
@@ -1067,6 +1069,7 @@ function Dashboard({
           style={[styles.dashboardSurface, surface === "terminal" && styles.activeSurface]}
         >
           <LiveTerminalCard
+            inputFocused={inputFocused}
             active={surface === "terminal"}
             accessToken={accessToken}
             bootstrap={bootstrap}
@@ -1117,6 +1120,7 @@ function usePaneValue<T>(paneId: string, initialValue: T): [T, (value: T) => voi
 }
 
 function LiveTerminalCard({
+  inputFocused,
   active,
   accessToken,
   bootstrap,
@@ -1127,6 +1131,7 @@ function LiveTerminalCard({
   onFocusInput,
   terminalRef,
 }: {
+  inputFocused: boolean;
   active: boolean;
   accessToken: string | undefined;
   bootstrap: BootstrapPayload;
@@ -1281,11 +1286,6 @@ function LiveTerminalCard({
     ]);
   }, [attachPhotos, pasteClipboardImage]);
 
-  const handleTerminalLayout = useCallback((event: LayoutChangeEvent): void => {
-    const { height, width } = event.nativeEvent.layout;
-    setTerminalSize((current) => (current.height === height && current.width === width ? current : { height, width }));
-  }, []);
-
   const activateTerminalLink = useCallback(
     async (point: Point): Promise<boolean> => {
       const link = await terminalRef.current?.activateLink(paneId, point.x, point.y);
@@ -1307,7 +1307,7 @@ function LiveTerminalCard({
 
   return (
     <View style={styles.terminalCard}>
-      <View onLayout={handleTerminalLayout} style={styles.terminalGestureSurface}>
+      <View style={styles.terminalGestureSurface}>
         <View style={styles.terminalOverlay}>
           {paneConnection === "live" ? null : (
             <View style={styles.terminalState}>
@@ -1325,6 +1325,8 @@ function LiveTerminalCard({
         </View>
         <TerminalSurface
           active={active}
+          inputFocused={inputFocused}
+          onViewportChange={setTerminalSize}
           onMessage={(message) => {
             if ("paneId" in message && message.paneId !== terminalSession.paneId) return;
             if (message.t === "pane") {
@@ -1362,22 +1364,24 @@ function LiveTerminalCard({
           style={styles.liveTerminalSurface}
         />
         {terminalSize.width > 0 && terminalSize.height > 0 ? (
-          <TerminalInteractionLayer
-            active={active}
-            altScreen={altScreen}
-            height={terminalSize.height}
-            onActivateLink={activateTerminalLink}
-            onCopy={() => send({ t: "copySelection", paneId })}
-            onCycleTab={onCycleTab}
-            onFocusInput={onFocusInput}
-            mouseTracking={mouseTracking}
-            onSend={send}
-            paneId={paneId}
-            selection={selection}
-            width={terminalSize.width}
-            {...(cursor ? { cursor } : {})}
-            {...(metrics ? { metrics } : {})}
-          />
+          <View style={[styles.terminalInputViewport, terminalSize]}>
+            <TerminalInteractionLayer
+              active={active}
+              altScreen={altScreen}
+              height={terminalSize.height}
+              onActivateLink={activateTerminalLink}
+              onCopy={() => send({ t: "copySelection", paneId })}
+              onCycleTab={onCycleTab}
+              onFocusInput={onFocusInput}
+              mouseTracking={mouseTracking}
+              onSend={send}
+              paneId={paneId}
+              selection={selection}
+              width={terminalSize.width}
+              {...(cursor ? { cursor } : {})}
+              {...(metrics ? { metrics } : {})}
+            />
+          </View>
         ) : null}
         {paneIssue ? (
           <Text pointerEvents="none" style={styles.terminalIssue}>
@@ -2216,6 +2220,11 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 8,
     zIndex: 9,
+  },
+  terminalInputViewport: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
   },
   surfaceStack: {
     flex: 1,
