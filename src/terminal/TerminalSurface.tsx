@@ -33,9 +33,11 @@ export interface TerminalSurfaceSession {
 
 interface TerminalSurfaceProps {
   active?: boolean;
+  inputFocused?: boolean;
   session?: TerminalSurfaceSession;
   onMessage?: (message: ToNative) => void;
   onStatusChange?: (status: TerminalSurfaceStatus, issue?: string) => void;
+  onViewportChange?: (viewport: TerminalViewport) => void;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -50,7 +52,7 @@ interface PendingLinkRequest {
 }
 
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(function TerminalSurface(
-  { active = true, session, onMessage, onStatusChange, style },
+  { active = true, inputFocused = false, session, onMessage, onStatusChange, onViewportChange, style },
   forwardedRef,
 ) {
   const webViewRef = useRef<WebView>(null);
@@ -73,6 +75,14 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
   useEffect(() => {
     onStatusChange?.(status, issue ?? undefined);
   }, [issue, onStatusChange, status]);
+
+  useEffect(() => {
+    viewportCoordinator.setInputFocused(inputFocused);
+  }, [inputFocused, viewportCoordinator]);
+
+  useEffect(() => {
+    onViewportChange?.(viewport);
+  }, [onViewportChange, viewport]);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,9 +143,12 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
     viewportCoordinator.beginTransition();
   }, [viewportCoordinator]);
 
-  const endViewportTransition = useCallback((): void => {
-    viewportCoordinator.endTransition();
-  }, [viewportCoordinator]);
+  const endViewportTransition = useCallback(
+    (keyboardHeight: number): void => {
+      viewportCoordinator.endTransition(keyboardHeight);
+    },
+    [viewportCoordinator],
+  );
 
   useGenericKeyboardHandler(
     {
@@ -143,9 +156,9 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
         "worklet";
         runOnJS(beginViewportTransition)();
       },
-      onEnd: () => {
+      onEnd: (event) => {
         "worklet";
-        runOnJS(endViewportTransition)();
+        runOnJS(endViewportTransition)(event.height);
       },
     },
     [beginViewportTransition, endViewportTransition],
@@ -219,41 +232,50 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
   return (
     <View onLayout={handleLayout} style={[styles.container, style]}>
       {source ? (
-        <WebView
-          ref={webViewRef}
-          allowFileAccess={false}
-          allowFileAccessFromFileURLs={false}
-          allowUniversalAccessFromFileURLs={false}
-          bounces={false}
-          allowsBackForwardNavigationGestures={false}
-          cacheEnabled
-          contentInsetAdjustmentBehavior="never"
-          domStorageEnabled={false}
-          hideKeyboardAccessoryView
-          incognito
-          javaScriptCanOpenWindowsAutomatically={false}
-          javaScriptEnabled
-          keyboardDisplayRequiresUserAction
-          mediaPlaybackRequiresUserAction
-          mixedContentMode="never"
-          onContentProcessDidTerminate={() => setIssue("The terminal renderer stopped unexpectedly")}
-          onMessage={handleMessage}
-          onRenderProcessGone={() => setIssue("The terminal renderer process stopped unexpectedly")}
-          onShouldStartLoadWithRequest={(request) => allowedNavigation(request.url, baseUrl)}
-          originWhitelist={["https://*", "http://*", "about:blank", "data:*"]}
-          overScrollMode="never"
-          pointerEvents="none"
-          scrollEnabled={false}
-          setSupportMultipleWindows={false}
-          sharedCookiesEnabled={false}
-          showsHorizontalScrollIndicator={false}
-          showsVerticalScrollIndicator={false}
-          source={source}
-          style={styles.webView}
-          textInteractionEnabled={false}
-          thirdPartyCookiesEnabled={false}
-          webviewDebuggingEnabled={__DEV__}
-        />
+        <View
+          style={
+            viewport.width > 0 && viewport.height > 0
+              ? [styles.viewport, { width: viewport.width, height: viewport.height }]
+              : styles.initialViewport
+          }
+        >
+          <WebView
+            ref={webViewRef}
+            allowFileAccess={false}
+            allowFileAccessFromFileURLs={false}
+            allowUniversalAccessFromFileURLs={false}
+            bounces={false}
+            allowsBackForwardNavigationGestures={false}
+            automaticallyAdjustContentInsets={false}
+            cacheEnabled
+            contentInsetAdjustmentBehavior="never"
+            domStorageEnabled={false}
+            hideKeyboardAccessoryView
+            incognito
+            javaScriptCanOpenWindowsAutomatically={false}
+            javaScriptEnabled
+            keyboardDisplayRequiresUserAction
+            mediaPlaybackRequiresUserAction
+            mixedContentMode="never"
+            onContentProcessDidTerminate={() => setIssue("The terminal renderer stopped unexpectedly")}
+            onMessage={handleMessage}
+            onRenderProcessGone={() => setIssue("The terminal renderer process stopped unexpectedly")}
+            onShouldStartLoadWithRequest={(request) => allowedNavigation(request.url, baseUrl)}
+            originWhitelist={["https://*", "http://*", "about:blank", "data:*"]}
+            overScrollMode="never"
+            pointerEvents="none"
+            scrollEnabled={false}
+            setSupportMultipleWindows={false}
+            sharedCookiesEnabled={false}
+            showsHorizontalScrollIndicator={false}
+            showsVerticalScrollIndicator={false}
+            source={source}
+            style={styles.webView}
+            textInteractionEnabled={false}
+            thirdPartyCookiesEnabled={false}
+            webviewDebuggingEnabled={__DEV__}
+          />
+        </View>
       ) : null}
       {status !== "ready" ? <TerminalSurfaceOverlay issue={issue} status={status} /> : null}
     </View>
@@ -325,6 +347,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.terminal,
     flex: 1,
     opacity: 0.99,
+  },
+  viewport: {
+    position: "absolute",
+    left: 0,
+    bottom: 0,
+  },
+  initialViewport: {
+    flex: 1,
   },
   overlay: {
     alignItems: "center",
