@@ -64,6 +64,11 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
   const viewportCoordinator = useMemo(() => new TerminalViewportCoordinator(setViewport), []);
   const status: TerminalSurfaceStatus = issue ? "error" : !html ? "loading-asset" : ready ? "ready" : "loading-host";
   const baseUrl = useMemo(() => normalizedBaseUrl(session?.serverUrl ?? diagnosticsBaseUrl), [session?.serverUrl]);
+  const source = useMemo(() => (html ? { html, baseUrl } : undefined), [baseUrl, html]);
+  const paneId = session?.paneId;
+  const serverUrl = session?.serverUrl;
+  const token = session?.token;
+  const settings = session?.settings;
 
   useEffect(() => {
     onStatusChange?.(status, issue ?? undefined);
@@ -147,31 +152,35 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
   );
 
   useEffect(() => {
-    if (!ready || !session) return;
+    if (!ready || !serverUrl || token === undefined || !settings) return;
     post({
       t: "init",
-      serverUrl: session.serverUrl,
-      token: session.token,
-      settings: session.settings,
+      serverUrl,
+      token,
+      settings,
     });
-    post({ t: "attach", paneId: session.paneId });
-  }, [hostGeneration, post, ready, session]);
+  }, [hostGeneration, post, ready, serverUrl, token, settings]);
 
   useEffect(() => {
-    if (!active || !ready || !session || viewport.width <= 0 || viewport.height <= 0) return;
+    if (!ready || !paneId) return;
+    post({ t: "attach", paneId });
+  }, [hostGeneration, post, ready, paneId]);
+
+  useEffect(() => {
+    if (!active || !ready || !paneId || viewport.width <= 0 || viewport.height <= 0) return;
     post({
       t: "viewport",
-      paneId: session.paneId,
+      paneId,
       widthPx: viewport.width,
       heightPx: viewport.height,
       dpr: PixelRatio.get(),
     });
-  }, [active, hostGeneration, post, ready, session, viewport.height, viewport.width]);
+  }, [active, hostGeneration, post, ready, paneId, viewport.height, viewport.width]);
 
   useEffect(() => {
-    if (!active || !ready || !session) return;
-    post({ t: "show", paneId: session.paneId });
-  }, [active, hostGeneration, post, ready, session]);
+    if (!active || !ready || !paneId) return;
+    post({ t: "show", paneId });
+  }, [active, hostGeneration, post, ready, paneId]);
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent): void => {
@@ -209,13 +218,14 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
 
   return (
     <View onLayout={handleLayout} style={[styles.container, style]}>
-      {html ? (
+      {source ? (
         <WebView
           ref={webViewRef}
           allowFileAccess={false}
           allowFileAccessFromFileURLs={false}
           allowUniversalAccessFromFileURLs={false}
           bounces={false}
+          allowsBackForwardNavigationGestures={false}
           cacheEnabled
           contentInsetAdjustmentBehavior="never"
           domStorageEnabled={false}
@@ -238,7 +248,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           sharedCookiesEnabled={false}
           showsHorizontalScrollIndicator={false}
           showsVerticalScrollIndicator={false}
-          source={{ html, baseUrl }}
+          source={source}
           style={styles.webView}
           textInteractionEnabled={false}
           thirdPartyCookiesEnabled={false}

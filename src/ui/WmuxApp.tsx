@@ -643,6 +643,7 @@ function TerminalTouchDiagnostics({ onFocusInput }: { onFocusInput: () => void }
         <Text style={styles.touchDiagnosticLine}>drag ↕ scroll · swipe ↔ tab · tap keyboard</Text>
         {layout.width && layout.height ? (
           <TerminalInteractionLayer
+            active
             altScreen={false}
             height={layout.height}
             metrics={metrics}
@@ -1362,6 +1363,7 @@ function LiveTerminalCard({
         />
         {terminalSize.width > 0 && terminalSize.height > 0 ? (
           <TerminalInteractionLayer
+            active={active}
             altScreen={altScreen}
             height={terminalSize.height}
             onActivateLink={activateTerminalLink}

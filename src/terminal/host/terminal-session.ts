@@ -95,6 +95,7 @@ export class TerminalSession {
   private replayTimer: number | undefined;
   private emptyReplayRepaintTimer: number | undefined;
   private replaying = false;
+  private replayCover: HTMLCanvasElement | undefined;
   private bufferedOutput: string[] = [];
   private lastReplayKind: PaneReplayKind | undefined;
   private durableRefreshGeneration = 0;
@@ -106,7 +107,11 @@ export class TerminalSession {
   private selectionFrame: number | undefined;
   private selectionIncludeText = false;
   private resizeClaimPending = false;
+  private cursorFrame: number | undefined;
+  private lastCursor: Extract<ToNative, { t: "cursor" }> | undefined;
+  private lastMetrics: Extract<ToNative, { t: "metrics" }> | undefined;
   private mouseTracking: boolean | undefined;
+  private alternateScreen = false;
   private paneConnectionState: PaneConnectionState = "connecting";
   private paneConnectionIssue: string | undefined;
 
@@ -151,7 +156,10 @@ export class TerminalSession {
         this.emitMouseTracking();
       },
       onOsc52: (text) => this.emit({ t: "osc52", paneId: this.paneId, text }),
-      onAlternateScreen: (active) => this.emit({ t: "altScreen", paneId: this.paneId, active }),
+      onAlternateScreen: (active) => {
+        this.alternateScreen = active;
+        this.emit({ t: "altScreen", paneId: this.paneId, active });
+      },
       onMedia: (media) => this.emit({ t: "media", paneId: this.paneId, ...media }),
       onIssue: (message) => this.emit({ t: "log", level: "warn", message: `Kitty graphics: ${message}` }),
     });
@@ -217,7 +225,11 @@ export class TerminalSession {
       return;
     }
     this.onActivity();
+    this.lastCursor = undefined;
+    this.lastMetrics = undefined;
     this.emitPaneConnectionState();
+    this.emit({ t: "altScreen", paneId: this.paneId, active: this.alternateScreen });
+    this.scheduleSelectionEmission(false);
     this.refreshVisibleTerminal();
   }
 
@@ -355,6 +367,8 @@ export class TerminalSession {
     this.clearEmptyReplayRepaintTimer();
     this.cancelDurableRefresh();
     if (this.selectionFrame !== undefined) window.cancelAnimationFrame(this.selectionFrame);
+    if (this.cursorFrame !== undefined) window.cancelAnimationFrame(this.cursorFrame);
+    this.releaseReplayCover();
     this.clearReconnectTimer();
     this.clearViewportResizeTimer();
     this.closeSocket();
@@ -427,6 +441,7 @@ export class TerminalSession {
       return;
     }
     if (message.type === "ready") {
+      this.preserveReplayFrame();
       this.exited = false;
       this.lastReplayKind = message.replayKind;
       this.applyAuthoritativeSize(message);
@@ -506,6 +521,7 @@ export class TerminalSession {
       window.requestAnimationFrame(() => {
         if (this.disposed || generation !== this.replayGeneration) return;
         this.redrawVisibleTerminal();
+        this.releaseReplayCover();
         this.emitMetrics();
         this.emitCursor();
       });
@@ -560,6 +576,7 @@ export class TerminalSession {
     window.requestAnimationFrame(() => {
       if (this.disposed || generation !== this.durableRefreshGeneration) return;
       this.redrawVisibleTerminal();
+      this.releaseReplayCover();
       this.emitMetrics();
       this.emitCursor();
     });
@@ -586,6 +603,28 @@ export class TerminalSession {
     if (!renderer || !terminal) return;
     renderer.resize(this.terminal.cols, this.terminal.rows);
     renderer.render(terminal, true, this.terminal.viewportY, this.terminal);
+  }
+
+  private preserveReplayFrame(): void {
+    if (!this.visible || this.replayCover) return;
+    const canvas = this.element.querySelector("canvas");
+    if (!canvas || !canvas.width || !canvas.height) return;
+    const cover = document.createElement("canvas");
+    cover.width = canvas.width;
+    cover.height = canvas.height;
+    const context = cover.getContext("2d");
+    if (!context) return;
+    context.drawImage(canvas, 0, 0);
+    cover.className = "terminal-replay-cover";
+    cover.style.width = canvas.style.width || `${canvas.clientWidth}px`;
+    cover.style.height = canvas.style.height || `${canvas.clientHeight}px`;
+    this.element.appendChild(cover);
+    this.replayCover = cover;
+  }
+
+  private releaseReplayCover(): void {
+    this.replayCover?.remove();
+    this.replayCover = undefined;
   }
 
   private requestDurableRepaintIfBlank(generation: number): void {
@@ -833,29 +872,60 @@ export class TerminalSession {
   }
 
   private emitMetrics(): void {
+    if (!this.visible) return;
     const metrics = this.terminal.renderer?.getMetrics();
     if (!metrics?.width || !metrics.height) return;
-    this.emit({
+    const message: Extract<ToNative, { t: "metrics" }> = {
       t: "metrics",
       paneId: this.paneId,
       cols: this.terminal.cols,
       rows: this.terminal.rows,
       cellW: metrics.width,
       cellH: metrics.height,
-    });
+    };
+    const previous = this.lastMetrics;
+    if (
+      previous &&
+      previous.cols === message.cols &&
+      previous.rows === message.rows &&
+      previous.cellW === message.cellW &&
+      previous.cellH === message.cellH
+    )
+      return;
+    this.lastMetrics = message;
+    this.emit(message);
   }
 
   private emitCursor(): void {
+    if (!this.visible || this.disposed || this.cursorFrame !== undefined) return;
+    this.cursorFrame = window.requestAnimationFrame(() => {
+      this.cursorFrame = undefined;
+      if (!this.visible || this.disposed) return;
+      this.flushCursor();
+    });
+  }
+
+  private flushCursor(): void {
     const cursor = this.terminal.wasmTerm?.getCursor();
     const metrics = this.terminal.renderer?.getMetrics();
     if (!cursor || !metrics?.width || !metrics.height) return;
-    this.emit({
+    const message: Extract<ToNative, { t: "cursor" }> = {
       t: "cursor",
       paneId: this.paneId,
       xPx: cursor.x * metrics.width,
       yPx: cursor.y * metrics.height,
       visible: cursor.visible,
-    });
+    };
+    const previous = this.lastCursor;
+    if (
+      previous &&
+      previous.xPx === message.xPx &&
+      previous.yPx === message.yPx &&
+      previous.visible === message.visible
+    )
+      return;
+    this.lastCursor = message;
+    this.emit(message);
   }
 
   private emitMouseTracking(force = false): void {

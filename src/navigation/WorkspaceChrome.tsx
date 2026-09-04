@@ -59,11 +59,11 @@ export function WorkspaceChrome({
     () =>
       PanResponder.create({
         onPanResponderMove: (_event, gesture) => {
-          if (gesture.dx >= 64) setDrawerOpen(true);
+          if (gesture.dx >= 64 && gesture.dx > Math.abs(gesture.dy) * 1.5) setDrawerOpen(true);
         },
         onPanResponderTerminationRequest: () => false,
         onPanResponderRelease: (_event, gesture) => {
-          if (gesture.dx >= 64) setDrawerOpen(true);
+          if (gesture.dx >= 64 && gesture.dx > Math.abs(gesture.dy) * 1.5) setDrawerOpen(true);
         },
         onStartShouldSetPanResponder: () => edgeSwipeEnabled,
         onStartShouldSetPanResponderCapture: () => edgeSwipeEnabled,

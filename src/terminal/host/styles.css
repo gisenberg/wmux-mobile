@@ -52,3 +52,10 @@ body {
 .terminal-session textarea {
   pointer-events: none !important;
 }
+
+.terminal-replay-cover {
+  position: absolute;
+  inset: 0 auto auto 0;
+  z-index: 10;
+  pointer-events: none;
+}

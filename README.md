@@ -95,7 +95,10 @@ The modals support portrait and both landscape orientations and account for plat
 
 ## Native touch and clipboard
 
-The terminal interaction layer turns vertical drags into line-based scrollback with momentum, snaps an upward fling back to live output, and keeps horizontal tab cycling disabled while an alternate-screen application is active.
+The terminal interaction layer locks each drag to one direction and scrolls with frame-paced momentum without jumping past scrollback to live output.
+Horizontal tab cycling is disabled while an alternate-screen or mouse-tracked application is active, including after returning to a pooled pane.
+Pane changes cancel pending taps and momentum so a previous gesture cannot open the keyboard or scroll the next pane.
+Terminal cursor and geometry messages are deduplicated, and reconnect replay keeps the last painted frame visible until the replacement frame is ready.
 Long press begins selection with a native loupe and draggable handles.
 Double tap selects a word, triple tap selects a line, and the native toolbar exposes copy, select all, and clear.
 
