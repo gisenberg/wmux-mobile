@@ -26,7 +26,9 @@ export interface TerminalInputHandle {
 
 interface TerminalInputProps {
   altSendsMeta?: boolean;
+  onCopy?: () => void;
   onFocusChange?: (focused: boolean) => void;
+  onHardwareKeyboardChange?: (connected: boolean) => void;
   onKey: (event: WmuxKeyInputKeyEvent) => void;
   onModifierState?: (event: WmuxKeyInputModifierEvent) => void;
   onPaste?: (text?: string) => void;
@@ -51,7 +53,7 @@ const accessoryKeys: AccessoryKey[] = [
 const literalKeys = ["|", "/", "~", "-", "_", "`"] as const;
 
 export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>(function TerminalInput(
-  { altSendsMeta = false, onFocusChange, onKey, onModifierState, onPaste, onText },
+  { altSendsMeta = false, onCopy, onFocusChange, onHardwareKeyboardChange, onKey, onModifierState, onPaste, onText },
   forwardedRef,
 ) {
   const nativeRef = useRef<WmuxKeyInputRef>(null);
@@ -202,6 +204,8 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
     <>
       <WmuxKeyInputView
         altSendsMeta={altSendsMeta}
+        onCopy={() => onCopy?.()}
+        onHardwareKeyboardChange={(event) => onHardwareKeyboardChange?.(event.nativeEvent.connected)}
         onFocusChange={(event) => handleFocusChange(event.nativeEvent.focused)}
         onKey={(event) => handleNativeKey(event.nativeEvent)}
         onModifierState={(event) => onModifierState?.(event.nativeEvent)}

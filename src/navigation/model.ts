@@ -1,4 +1,4 @@
-import type { BootstrapPayload, PaneState, SurfaceTab, Workspace } from "../../protocol/wmux";
+import type { BootstrapPayload, LayoutNode, PaneState, SurfaceTab, Workspace } from "../../protocol/wmux";
 
 export interface NavigationSelection {
   workspaceId: string;
@@ -84,4 +84,57 @@ export const cycleTab = (
   const nextIndex = (currentIndex + direction + resolved.workspace.tabs.length) % resolved.workspace.tabs.length;
   const nextTab = resolved.workspace.tabs[nextIndex];
   return nextTab ? selectTab(bootstrap, resolved.selection, nextTab.id) : resolved;
+};
+
+/** Matches the web client's numbered shortcuts, where 9 always selects the last item. */
+export const numberedItem = <T>(items: readonly T[], position: number): T | undefined =>
+  position === 9 ? items.at(-1) : items[position - 1];
+
+const layoutPaneIds = (node: LayoutNode): string[] =>
+  node.type === "pane" ? [node.paneId] : [...layoutPaneIds(node.first), ...layoutPaneIds(node.second)];
+
+export const orderedTabPanes = (tab: SurfaceTab): PaneState[] => {
+  const paneById = new Map(tab.panes.map((pane) => [pane.id, pane]));
+  const ordered = layoutPaneIds(tab.layout).flatMap((paneId) => {
+    const pane = paneById.get(paneId);
+    if (!pane) return [];
+    paneById.delete(paneId);
+    return [pane];
+  });
+  return [...ordered, ...paneById.values()];
+};
+
+export const cyclePane = (
+  bootstrap: BootstrapPayload,
+  current: NavigationSelection,
+  direction: -1 | 1,
+): ResolvedNavigation | null => {
+  const resolved = resolveNavigation(bootstrap, current);
+  if (!resolved) return null;
+  const panes = orderedTabPanes(resolved.tab);
+  if (panes.length < 2) return resolved;
+  const currentIndex = panes.findIndex((pane) => pane.id === resolved.pane.id);
+  const nextPane = panes[(currentIndex + direction + panes.length) % panes.length];
+  return nextPane ? selectPane(bootstrap, resolved.selection, nextPane.id) : resolved;
+};
+
+export const selectTabAt = (
+  bootstrap: BootstrapPayload,
+  current: NavigationSelection,
+  position: number,
+): ResolvedNavigation | null => {
+  const resolved = resolveNavigation(bootstrap, current);
+  const tab = resolved ? numberedItem(resolved.workspace.tabs, position) : undefined;
+  return resolved && tab ? selectTab(bootstrap, resolved.selection, tab.id) : null;
+};
+
+export const latestUnreadNavigation = (bootstrap: BootstrapPayload): ResolvedNavigation | null => {
+  const unread = bootstrap.notifications
+    .filter((notification) => !notification.read)
+    .sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt));
+  for (const notification of unread) {
+    const resolved = resolveNavigation(bootstrap, notification);
+    if (resolved?.pane.id === notification.paneId) return resolved;
+  }
+  return null;
 };

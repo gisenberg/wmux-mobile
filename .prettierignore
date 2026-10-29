@@ -3,5 +3,6 @@ android/
 ios/
 node_modules/
 PLAN.md
+protocol/keybindings.ts
 protocol/wmux.ts
 src/terminal/host/vendor/

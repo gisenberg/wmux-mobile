@@ -1,25 +1,66 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
+import {
+  Modal,
+  PanResponder,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type ModalProps,
+} from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { TERMINAL_COLOR_SCHEME_IDS, type BootstrapPayload, type WmuxSettings } from "../../protocol/wmux";
+import {
+  TERMINAL_COLOR_SCHEME_IDS,
+  type BootstrapPayload,
+  type SplitDirection,
+  type WmuxSettings,
+} from "../../protocol/wmux";
 
 import { chromeTheme, type ChromeTheme } from "@/navigation/chrome-theme";
 import {
   drawerWorkspaceSignals,
   paneDrawerLabel,
   paneUnreadCount,
+  tabStripLabel,
+  tabUnreadCount,
   type DrawerAgentSignal,
 } from "@/navigation/drawer-model";
-import type { ResolvedNavigation } from "@/navigation/model";
-import { drawerMachineName, drawerWorkspaceGroups, type DrawerWorkspaceRow } from "@/navigation/sidebar-model";
+import { selectTab, type ResolvedNavigation } from "@/navigation/model";
+import {
+  drawerMachineName,
+  drawerRowNavigation,
+  drawerWorkspaceGroups,
+  type DrawerWorkspaceRow,
+} from "@/navigation/sidebar-model";
+import { SIDEBAR_WIDTH } from "@/ui/layout";
+import { useFormFactor } from "@/ui/use-form-factor";
 import { fonts } from "@/ui/theme";
 
 const runningFrames = ["|", "/", "-", "\\"] as const;
 
-export type WorkspaceAction = { type: "create-workspace"; machineId: string } | { type: "close-workspace" };
+const modalOrientations: ModalProps["supportedOrientations"] = [
+  "portrait",
+  "portrait-upside-down",
+  "landscape-left",
+  "landscape-right",
+];
+
+export type WorkspaceAction =
+  | { type: "create-workspace"; machineId: string }
+  | { type: "close-workspace" }
+  | { type: "create-tab" }
+  | { type: "close-tab"; tabId: string }
+  | { type: "split-pane"; direction: SplitDirection };
 
 export type WorkspaceSurface = "chat" | "terminal";
+
+export interface WorkspaceChromeHandle {
+  openSettings(): void;
+  toggleSidebar(): void;
+}
 
 interface WorkspaceChromeProps {
   bootstrap: BootstrapPayload;
@@ -31,103 +72,183 @@ interface WorkspaceChromeProps {
   onForget: () => void;
   onNavigate: (navigation: ResolvedNavigation) => void;
   onOpenDiagnostics: () => void;
+  onOverlayChange?: (open: boolean) => void;
   onRefresh: () => void;
   onSurfaceChange: (surface: WorkspaceSurface) => void;
   onUpdateSettings: (settings: WmuxSettings) => void;
   surface: WorkspaceSurface;
 }
 
-export function WorkspaceChrome({
-  bootstrap,
-  children,
-  edgeSwipeEnabled = true,
-  mutationBusy = false,
-  navigation,
-  onAction,
-  onForget,
-  onNavigate,
-  onOpenDiagnostics,
-  onRefresh,
-  onSurfaceChange,
-  onUpdateSettings,
-  surface,
-}: WorkspaceChromeProps) {
+export const WorkspaceChrome = forwardRef<WorkspaceChromeHandle, WorkspaceChromeProps>(function WorkspaceChrome(
+  {
+    bootstrap,
+    children,
+    edgeSwipeEnabled = true,
+    mutationBusy = false,
+    navigation,
+    onAction,
+    onForget,
+    onNavigate,
+    onOpenDiagnostics,
+    onOverlayChange,
+    onRefresh,
+    onSurfaceChange,
+    onUpdateSettings,
+    surface,
+  },
+  forwardedRef,
+) {
+  const regular = useFormFactor() === "regular";
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarHidden, setSidebarHidden] = useState(false);
+  const sidebarVisible = regular && !sidebarHidden;
+  const drawerVisible = drawerOpen && !regular;
+  const overlayOpen = drawerVisible || settingsOpen;
   const theme = chromeTheme(bootstrap.settings.colorScheme);
+
+  const openNavigator = useCallback((): void => {
+    if (regular) setSidebarHidden(false);
+    else setDrawerOpen(true);
+  }, [regular]);
+
+  const toggleSidebar = useCallback((): void => {
+    if (regular) setSidebarHidden((hidden) => !hidden);
+    else setDrawerOpen((open) => !open);
+  }, [regular]);
+
+  useImperativeHandle(
+    forwardedRef,
+    () => ({
+      openSettings: () => {
+        setDrawerOpen(false);
+        setSettingsOpen(true);
+      },
+      toggleSidebar,
+    }),
+    [toggleSidebar],
+  );
+
+  useEffect(() => {
+    onOverlayChange?.(overlayOpen);
+  }, [onOverlayChange, overlayOpen]);
+
+  const edgeSwipeActive = edgeSwipeEnabled && !sidebarVisible;
   const edgeSwipeResponder = useMemo(
     () =>
       PanResponder.create({
         onPanResponderMove: (_event, gesture) => {
-          if (gesture.dx >= 64 && gesture.dx > Math.abs(gesture.dy) * 1.5) setDrawerOpen(true);
+          if (gesture.dx >= 64 && gesture.dx > Math.abs(gesture.dy) * 1.5) openNavigator();
         },
         onPanResponderTerminationRequest: () => false,
         onPanResponderRelease: (_event, gesture) => {
-          if (gesture.dx >= 64 && gesture.dx > Math.abs(gesture.dy) * 1.5) setDrawerOpen(true);
+          if (gesture.dx >= 64 && gesture.dx > Math.abs(gesture.dy) * 1.5) openNavigator();
         },
-        onStartShouldSetPanResponder: () => edgeSwipeEnabled,
-        onStartShouldSetPanResponderCapture: () => edgeSwipeEnabled,
+        onStartShouldSetPanResponder: () => edgeSwipeActive,
+        onStartShouldSetPanResponderCapture: () => edgeSwipeActive,
       }),
-    [edgeSwipeEnabled],
+    [edgeSwipeActive, openNavigator],
   );
+
+  const openSettingsFromNavigator = (): void => {
+    setDrawerOpen(false);
+    setSettingsOpen(true);
+  };
 
   return (
     <View style={styles.root}>
-      <View
-        accessibilityLabel="Open workspace drawer with edge swipe"
-        collapsable={false}
-        style={styles.edgeSwipeZone}
-        {...edgeSwipeResponder.panHandlers}
-      />
-      <View style={[styles.workspaceHeader, { backgroundColor: theme.panel, borderColor: theme.line }]}>
-        <Pressable
-          accessibilityLabel="Open workspace drawer"
-          accessibilityRole="button"
-          onPress={() => setDrawerOpen(true)}
-          style={({ pressed }) => [
-            styles.squareButton,
-            { backgroundColor: theme.accentDim, borderColor: theme.line },
-            pressed && styles.pressed,
-          ]}
-        >
-          <Text style={[styles.squareButtonText, { color: theme.accent }]}>☰</Text>
-        </Pressable>
-        <View style={styles.workspaceHeaderCopy}>
-          <Text numberOfLines={1} style={[styles.workspaceName, { color: theme.text }]}>
-            {navigation.workspace.name}
-          </Text>
-        </View>
-        <View style={[styles.surfaceSwitcher, { backgroundColor: theme.canvas, borderColor: theme.line }]}>
-          <SurfaceButton
-            active={surface === "terminal"}
-            label="Terminal"
-            onPress={() => onSurfaceChange("terminal")}
-            theme={theme}
-          />
-          <SurfaceButton
-            active={surface === "chat"}
-            label="Chat"
-            onPress={() => onSurfaceChange("chat")}
+      {sidebarVisible ? null : (
+        <View
+          accessibilityLabel="Open workspace drawer with edge swipe"
+          collapsable={false}
+          style={styles.edgeSwipeZone}
+          {...edgeSwipeResponder.panHandlers}
+        />
+      )}
+      {sidebarVisible ? (
+        <View style={[styles.sidebar, { backgroundColor: theme.panel, borderColor: theme.line }]}>
+          <WorkspaceNavigator
+            animate
+            bootstrap={bootstrap}
+            busy={mutationBusy}
+            mode="sidebar"
+            navigation={navigation}
+            onCreateWorkspace={(machineId) => onAction({ type: "create-workspace", machineId })}
+            onNavigate={onNavigate}
+            onOpenSettings={openSettingsFromNavigator}
             theme={theme}
           />
         </View>
-        <Pressable
-          accessibilityLabel={`Close ${navigation.workspace.name} workspace`}
-          accessibilityRole="button"
-          disabled={mutationBusy}
-          onPress={() => onAction({ type: "close-workspace" })}
-          style={({ pressed }) => [
-            styles.squareButton,
-            styles.closeWorkspaceButton,
-            mutationBusy && styles.disabled,
-            pressed && styles.pressed,
+      ) : null}
+      <View style={styles.main}>
+        <View
+          style={[
+            styles.workspaceHeader,
+            regular && styles.workspaceHeaderRegular,
+            { backgroundColor: theme.panel, borderColor: theme.line },
           ]}
         >
-          <Text style={[styles.squareButtonText, styles.closeWorkspaceGlyph]}>×</Text>
-        </Pressable>
-      </View>
+          <Pressable
+            accessibilityLabel={
+              sidebarVisible ? "Hide workspace sidebar" : regular ? "Show workspace sidebar" : "Open workspace drawer"
+            }
+            accessibilityRole="button"
+            onPress={toggleSidebar}
+            style={({ pressed }) => [
+              styles.squareButton,
+              { backgroundColor: theme.accentDim, borderColor: theme.line },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.squareButtonText, { color: theme.accent }]}>☰</Text>
+          </Pressable>
+          <View style={[styles.workspaceHeaderCopy, regular && styles.workspaceHeaderCopyRegular]}>
+            <Text numberOfLines={1} style={[styles.workspaceName, { color: theme.text }]}>
+              {navigation.workspace.name}
+            </Text>
+          </View>
+          {regular ? (
+            <TabStrip
+              bootstrap={bootstrap}
+              busy={mutationBusy}
+              navigation={navigation}
+              onAction={onAction}
+              onNavigate={onNavigate}
+              theme={theme}
+            />
+          ) : null}
+          <View style={[styles.surfaceSwitcher, { backgroundColor: theme.canvas, borderColor: theme.line }]}>
+            <SurfaceButton
+              active={surface === "terminal"}
+              label="Terminal"
+              onPress={() => onSurfaceChange("terminal")}
+              theme={theme}
+            />
+            <SurfaceButton
+              active={surface === "chat"}
+              label="Chat"
+              onPress={() => onSurfaceChange("chat")}
+              theme={theme}
+            />
+          </View>
+          <Pressable
+            accessibilityLabel={`Close ${navigation.workspace.name} workspace`}
+            accessibilityRole="button"
+            disabled={mutationBusy}
+            onPress={() => onAction({ type: "close-workspace" })}
+            style={({ pressed }) => [
+              styles.squareButton,
+              styles.closeWorkspaceButton,
+              mutationBusy && styles.disabled,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.squareButtonText, styles.closeWorkspaceGlyph]}>×</Text>
+          </Pressable>
+        </View>
 
-      {children}
+        {children}
+      </View>
 
       <WorkspaceDrawer
         bootstrap={bootstrap}
@@ -142,11 +263,8 @@ export function WorkspaceChrome({
           onNavigate(next);
           setDrawerOpen(false);
         }}
-        onOpenSettings={() => {
-          setDrawerOpen(false);
-          setSettingsOpen(true);
-        }}
-        open={drawerOpen}
+        onOpenSettings={openSettingsFromNavigator}
+        open={drawerVisible}
         theme={theme}
       />
       <WorkspaceSettingsSheet
@@ -168,12 +286,13 @@ export function WorkspaceChrome({
           onRefresh();
         }}
         open={settingsOpen}
+        regular={regular}
         settings={bootstrap.settings}
         theme={theme}
       />
     </View>
   );
-}
+});
 
 function SurfaceButton({
   active,
@@ -202,6 +321,102 @@ function SurfaceButton({
   );
 }
 
+function TabStrip({
+  bootstrap,
+  busy,
+  navigation,
+  onAction,
+  onNavigate,
+  theme,
+}: {
+  bootstrap: BootstrapPayload;
+  busy: boolean;
+  navigation: ResolvedNavigation;
+  onAction: (action: WorkspaceAction) => void;
+  onNavigate: (navigation: ResolvedNavigation) => void;
+  theme: ChromeTheme;
+}) {
+  const tabs = navigation.workspace.tabs;
+  return (
+    <ScrollView
+      contentContainerStyle={styles.tabStripContent}
+      horizontal
+      keyboardShouldPersistTaps="handled"
+      showsHorizontalScrollIndicator={false}
+      style={styles.tabStrip}
+    >
+      {tabs.map((tab, index) => {
+        const active = tab.id === navigation.tab.id;
+        const label = tabStripLabel(tab, index);
+        const unread = tabUnreadCount(bootstrap.notifications, tab.id);
+        return (
+          <View
+            key={tab.id}
+            style={[
+              styles.tabChip,
+              { borderColor: active ? theme.accent : theme.line },
+              active && { backgroundColor: theme.accentDim },
+            ]}
+          >
+            <Pressable
+              accessibilityLabel={[
+                `${label} tab`,
+                tab.panes.length > 1 ? `${tab.panes.length} panes` : "",
+                unread > 0 ? `${unread} unread ${unread === 1 ? "alert" : "alerts"}` : "",
+              ]
+                .filter(Boolean)
+                .join(", ")}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+              onPress={() => {
+                const next = selectTab(bootstrap, navigation.selection, tab.id);
+                if (next) onNavigate(next);
+              }}
+              style={({ pressed }) => [styles.tabChipBody, pressed && styles.pressed]}
+            >
+              <Text numberOfLines={1} style={[styles.tabChipLabel, { color: active ? theme.accent : theme.muted }]}>
+                {label}
+              </Text>
+              {tab.panes.length > 1 ? (
+                <Text style={[styles.tabChipCount, { color: active ? theme.accent : theme.faint }]}>
+                  {tab.panes.length}
+                </Text>
+              ) : null}
+              {unread > 0 ? <AlertBadge compact count={unread} theme={theme} /> : null}
+            </Pressable>
+            {active && tabs.length > 1 ? (
+              <Pressable
+                accessibilityLabel={`Close ${label} tab`}
+                accessibilityRole="button"
+                disabled={busy}
+                hitSlop={{ bottom: 6, right: 4, top: 6 }}
+                onPress={() => onAction({ type: "close-tab", tabId: tab.id })}
+                style={({ pressed }) => [styles.tabChipClose, busy && styles.disabled, pressed && styles.pressed]}
+              >
+                <Text style={[styles.tabChipCloseGlyph, { color: theme.muted }]}>×</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        );
+      })}
+      <Pressable
+        accessibilityLabel="New tab"
+        accessibilityRole="button"
+        disabled={busy}
+        onPress={() => onAction({ type: "create-tab" })}
+        style={({ pressed }) => [
+          styles.tabCreateButton,
+          { backgroundColor: theme.canvas, borderColor: theme.line },
+          busy && styles.disabled,
+          pressed && styles.pressed,
+        ]}
+      >
+        <Text style={[styles.tabCreateGlyph, { color: theme.accent }]}>＋</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
 function WorkspaceDrawer({
   bootstrap,
   busy,
@@ -224,27 +439,12 @@ function WorkspaceDrawer({
   theme: ChromeTheme;
 }) {
   const insets = useSafeAreaInsets();
-  const [animationTick, setAnimationTick] = useState(0);
-  const groupByHost = bootstrap.settings.groupSidebarSessionsByHost !== false;
-  const workspaceGroups = useMemo(
-    () => drawerWorkspaceGroups(bootstrap, navigation.workspace.id),
-    [bootstrap, navigation.workspace.id],
-  );
-  const hasWorkingAgent = workspaceGroups.some((group) =>
-    group.rows.some((row) => drawerWorkspaceSignals(bootstrap, row.workspace, row.pane).agent?.state === "working"),
-  );
-
-  useEffect(() => {
-    if (!open || !hasWorkingAgent) return;
-    const timer = setInterval(() => setAnimationTick((value) => (value + 1) % runningFrames.length), 280);
-    return () => clearInterval(timer);
-  }, [hasWorkingAgent, open]);
 
   return (
     <Modal
       animationType="fade"
       onRequestClose={onClose}
-      supportedOrientations={["portrait", "landscape-left", "landscape-right"]}
+      supportedOrientations={modalOrientations}
       transparent
       visible={open}
     >
@@ -261,95 +461,152 @@ function WorkspaceDrawer({
             },
           ]}
         >
-          <View style={[styles.sheetHeader, styles.drawerHeader]}>
-            <Text style={[styles.drawerTitle, { color: theme.text }]}>Spaces</Text>
-            <SheetCloseButton onPress={onClose} theme={theme} />
-          </View>
-          <ScrollView contentContainerStyle={styles.drawerList} showsVerticalScrollIndicator={false}>
-            <Text style={[styles.sectionLabel, { color: theme.muted }]}>SPACES</Text>
-            <View style={styles.hostList}>
-              {bootstrap.machines.map((machine) => {
-                const disabled = busy || !machine.reachable;
-                const machineName = drawerMachineName(bootstrap, machine.id);
-                return (
-                  <View key={machine.id} style={[styles.hostRow, { borderColor: theme.line }]}>
-                    <View style={[styles.hostDot, { backgroundColor: machine.reachable ? "#67d391" : "#ef7770" }]} />
-                    <View style={styles.hostRowCopy}>
-                      <Text numberOfLines={1} style={[styles.hostRowTitle, { color: theme.text }]}>
-                        {machineName}
-                      </Text>
-                      <Text numberOfLines={1} style={[styles.hostRowMeta, { color: theme.muted }]}>
-                        {machine.reachable ? machine.kind : "offline"}
-                      </Text>
-                    </View>
-                    <Pressable
-                      accessibilityLabel={`New workspace on ${machineName}`}
-                      accessibilityRole="button"
-                      accessibilityState={{ disabled }}
-                      disabled={disabled}
-                      onPress={() => onCreateWorkspace(machine.id)}
-                      style={({ pressed }) => [
-                        styles.hostCreateButton,
-                        { backgroundColor: theme.accentDim, borderColor: theme.line },
-                        disabled && styles.disabled,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Text style={[styles.hostCreateGlyph, { color: theme.accent }]}>＋</Text>
-                    </Pressable>
-                  </View>
-                );
-              })}
-            </View>
-            <Text style={[styles.sectionLabel, styles.workspaceSectionLabel, { color: theme.muted }]}>
-              {groupByHost ? "AGENTS" : "AGENT SESSIONS"}
-            </Text>
-            {workspaceGroups.map((group, groupIndex) => {
-              const machineLabel = group.machineId ? drawerMachineName(bootstrap, group.machineId) : undefined;
-              return (
-                <View key={group.machineId ?? `all-${groupIndex}`} style={styles.workspaceHostGroup}>
-                  {groupByHost && group.machineId ? (
-                    <View style={[styles.workspaceHostHeader, { borderColor: theme.line }]}>
-                      <Text numberOfLines={1} style={[styles.workspaceHostTitle, { color: theme.muted }]}>
-                        {machineLabel?.toUpperCase()}
-                      </Text>
-                      <Text style={[styles.workspaceHostCount, { color: theme.faint }]}>{group.rows.length}</Text>
-                    </View>
-                  ) : null}
-                  {group.rows.map((row) => (
-                    <DrawerWorkspaceItem
-                      animationTick={animationTick}
-                      bootstrap={bootstrap}
-                      groupedByHost={groupByHost}
-                      key={row.workspace.id}
-                      navigation={navigation}
-                      onNavigate={onNavigate}
-                      row={row}
-                      theme={theme}
-                    />
-                  ))}
-                </View>
-              );
-            })}
-          </ScrollView>
-          <View style={[styles.drawerFooter, { borderColor: theme.line }]}>
-            <Pressable
-              accessibilityLabel="Open settings"
-              accessibilityRole="button"
-              onPress={onOpenSettings}
-              style={({ pressed }) => [
-                styles.settingsNavButton,
-                { backgroundColor: theme.canvas, borderColor: theme.line },
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={[styles.settingsNavGlyph, { color: theme.accent }]}>⚙</Text>
-              <Text style={[styles.settingsNavLabel, { color: theme.text }]}>Settings</Text>
-            </Pressable>
-          </View>
+          <WorkspaceNavigator
+            animate={open}
+            bootstrap={bootstrap}
+            busy={busy}
+            mode="drawer"
+            navigation={navigation}
+            onClose={onClose}
+            onCreateWorkspace={onCreateWorkspace}
+            onNavigate={onNavigate}
+            onOpenSettings={onOpenSettings}
+            theme={theme}
+          />
         </View>
       </SafeAreaView>
     </Modal>
+  );
+}
+
+function WorkspaceNavigator({
+  animate,
+  bootstrap,
+  busy,
+  mode,
+  navigation,
+  onClose,
+  onCreateWorkspace,
+  onNavigate,
+  onOpenSettings,
+  theme,
+}: {
+  animate: boolean;
+  bootstrap: BootstrapPayload;
+  busy: boolean;
+  mode: "drawer" | "sidebar";
+  navigation: ResolvedNavigation;
+  onClose?: () => void;
+  onCreateWorkspace: (machineId: string) => void;
+  onNavigate: (navigation: ResolvedNavigation) => void;
+  onOpenSettings: () => void;
+  theme: ChromeTheme;
+}) {
+  const [animationTick, setAnimationTick] = useState(0);
+  const groupByHost = bootstrap.settings.groupSidebarSessionsByHost !== false;
+  const workspaceGroups = useMemo(
+    () => drawerWorkspaceGroups(bootstrap, navigation.workspace.id),
+    [bootstrap, navigation.workspace.id],
+  );
+  const hasWorkingAgent = workspaceGroups.some((group) =>
+    group.rows.some((row) => drawerWorkspaceSignals(bootstrap, row.workspace, row.pane).agent?.state === "working"),
+  );
+
+  useEffect(() => {
+    if (!animate || !hasWorkingAgent) return;
+    const timer = setInterval(() => setAnimationTick((value) => (value + 1) % runningFrames.length), 280);
+    return () => clearInterval(timer);
+  }, [animate, hasWorkingAgent]);
+
+  return (
+    <>
+      <View style={[styles.sheetHeader, styles.drawerHeader, mode === "sidebar" && styles.sidebarHeader]}>
+        <Text style={[styles.drawerTitle, { color: theme.text }]}>Spaces</Text>
+        {onClose ? <SheetCloseButton onPress={onClose} theme={theme} /> : null}
+      </View>
+      <ScrollView contentContainerStyle={styles.drawerList} showsVerticalScrollIndicator={false}>
+        <Text style={[styles.sectionLabel, { color: theme.muted }]}>SPACES</Text>
+        <View style={styles.hostList}>
+          {bootstrap.machines.map((machine) => {
+            const disabled = busy || !machine.reachable;
+            const machineName = drawerMachineName(bootstrap, machine.id);
+            return (
+              <View key={machine.id} style={[styles.hostRow, { borderColor: theme.line }]}>
+                <View style={[styles.hostDot, { backgroundColor: machine.reachable ? "#67d391" : "#ef7770" }]} />
+                <View style={styles.hostRowCopy}>
+                  <Text numberOfLines={1} style={[styles.hostRowTitle, { color: theme.text }]}>
+                    {machineName}
+                  </Text>
+                  <Text numberOfLines={1} style={[styles.hostRowMeta, { color: theme.muted }]}>
+                    {machine.reachable ? machine.kind : "offline"}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityLabel={`New workspace on ${machineName}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled }}
+                  disabled={disabled}
+                  onPress={() => onCreateWorkspace(machine.id)}
+                  style={({ pressed }) => [
+                    styles.hostCreateButton,
+                    { backgroundColor: theme.accentDim, borderColor: theme.line },
+                    disabled && styles.disabled,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={[styles.hostCreateGlyph, { color: theme.accent }]}>＋</Text>
+                </Pressable>
+              </View>
+            );
+          })}
+        </View>
+        <Text style={[styles.sectionLabel, styles.workspaceSectionLabel, { color: theme.muted }]}>
+          {groupByHost ? "AGENTS" : "AGENT SESSIONS"}
+        </Text>
+        {workspaceGroups.map((group, groupIndex) => {
+          const machineLabel = group.machineId ? drawerMachineName(bootstrap, group.machineId) : undefined;
+          return (
+            <View key={group.machineId ?? `all-${groupIndex}`} style={styles.workspaceHostGroup}>
+              {groupByHost && group.machineId ? (
+                <View style={[styles.workspaceHostHeader, { borderColor: theme.line }]}>
+                  <Text numberOfLines={1} style={[styles.workspaceHostTitle, { color: theme.muted }]}>
+                    {machineLabel?.toUpperCase()}
+                  </Text>
+                  <Text style={[styles.workspaceHostCount, { color: theme.faint }]}>{group.rows.length}</Text>
+                </View>
+              ) : null}
+              {group.rows.map((row) => (
+                <DrawerWorkspaceItem
+                  animationTick={animationTick}
+                  bootstrap={bootstrap}
+                  groupedByHost={groupByHost}
+                  key={row.workspace.id}
+                  navigation={navigation}
+                  onNavigate={onNavigate}
+                  row={row}
+                  theme={theme}
+                />
+              ))}
+            </View>
+          );
+        })}
+      </ScrollView>
+      <View style={[styles.drawerFooter, { borderColor: theme.line }]}>
+        <Pressable
+          accessibilityLabel="Open settings"
+          accessibilityRole="button"
+          onPress={onOpenSettings}
+          style={({ pressed }) => [
+            styles.settingsNavButton,
+            { backgroundColor: theme.canvas, borderColor: theme.line },
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={[styles.settingsNavGlyph, { color: theme.accent }]}>⚙</Text>
+          <Text style={[styles.settingsNavLabel, { color: theme.text }]}>Settings</Text>
+        </Pressable>
+      </View>
+    </>
   );
 }
 
@@ -370,7 +627,7 @@ function DrawerWorkspaceItem({
   row: DrawerWorkspaceRow;
   theme: ChromeTheme;
 }) {
-  const { pane, tab, workspace } = row;
+  const { pane, workspace } = row;
   const active = workspace.id === navigation.workspace.id;
   const machine = bootstrap.machines.find((candidate) => candidate.id === row.machineId);
   const machineLabel = drawerMachineName(bootstrap, row.machineId);
@@ -403,18 +660,7 @@ function DrawerWorkspaceItem({
           .join(", ")}
         accessibilityRole="button"
         accessibilityState={{ selected: active }}
-        onPress={() =>
-          onNavigate({
-            pane,
-            selection: {
-              paneId: pane.id,
-              tabId: tab.id,
-              workspaceId: workspace.id,
-            },
-            tab,
-            workspace,
-          })
-        }
+        onPress={() => onNavigate(drawerRowNavigation(row))}
         style={({ pressed }) => [styles.drawerRow, pressed && styles.pressed]}
       >
         <Text style={[styles.drawerActiveMarker, { color: active ? theme.accent : theme.muted }]}>
@@ -567,6 +813,7 @@ function WorkspaceSettingsSheet({
   onOpenDiagnostics,
   onRefresh,
   open,
+  regular,
   settings,
   theme,
 }: {
@@ -576,6 +823,7 @@ function WorkspaceSettingsSheet({
   onOpenDiagnostics: () => void;
   onRefresh: () => void;
   open: boolean;
+  regular: boolean;
   settings: WmuxSettings;
   theme: ChromeTheme;
 }) {
@@ -591,14 +839,20 @@ function WorkspaceSettingsSheet({
     <Modal
       animationType="slide"
       onRequestClose={close}
-      supportedOrientations={["portrait", "landscape-left", "landscape-right"]}
+      supportedOrientations={modalOrientations}
       transparent
       visible={open}
     >
-      <SafeAreaView style={styles.modalRoot}>
+      <SafeAreaView style={[styles.modalRoot, regular && styles.settingsModalRootRegular]}>
         <Pressable accessibilityLabel="Close terminal settings" onPress={close} style={styles.modalBackdrop} />
-        <View style={[styles.settingsSheet, { backgroundColor: draftTheme.panel, borderColor: draftTheme.line }]}>
-          <View style={styles.sheetHandle} />
+        <View
+          style={[
+            styles.settingsSheet,
+            regular && styles.settingsSheetRegular,
+            { backgroundColor: draftTheme.panel, borderColor: draftTheme.line },
+          ]}
+        >
+          {regular ? null : <View style={styles.sheetHandle} />}
           <ScrollView
             bounces={false}
             contentContainerStyle={styles.settingsScrollContent}
@@ -834,9 +1088,25 @@ function SheetCloseButton({ onPress, theme }: { onPress: () => void; theme: Chro
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+    flexDirection: "row",
     minHeight: 0,
     position: "relative",
     width: "100%",
+  },
+  main: {
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+  },
+  sidebar: {
+    borderRightWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 12,
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    width: SIDEBAR_WIDTH,
+  },
+  sidebarHeader: {
+    minHeight: 47,
   },
   edgeSwipeZone: {
     bottom: 0,
@@ -855,6 +1125,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 5,
     zIndex: 4,
+  },
+  workspaceHeaderRegular: {
+    gap: 8,
+    paddingHorizontal: 8,
   },
   squareButton: {
     alignItems: "center",
@@ -882,6 +1156,11 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 54,
   },
+  workspaceHeaderCopyRegular: {
+    flex: 0,
+    flexShrink: 1,
+    maxWidth: 220,
+  },
   workspaceName: {
     fontSize: 13,
     fontWeight: "800",
@@ -903,6 +1182,66 @@ const styles = StyleSheet.create({
   surfaceButtonText: {
     fontFamily: fonts.mono,
     fontSize: 9,
+    fontWeight: "800",
+  },
+  tabStrip: {
+    flex: 1,
+    minWidth: 0,
+  },
+  tabStripContent: {
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 2,
+  },
+  tabChip: {
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    height: 32,
+    maxWidth: 240,
+  },
+  tabChipBody: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 1,
+    gap: 6,
+    height: 30,
+    paddingHorizontal: 10,
+  },
+  tabChipLabel: {
+    flexShrink: 1,
+    fontFamily: fonts.mono,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  tabChipCount: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    fontWeight: "800",
+  },
+  tabChipClose: {
+    alignItems: "center",
+    height: 30,
+    justifyContent: "center",
+    marginLeft: -6,
+    width: 26,
+  },
+  tabChipCloseGlyph: {
+    fontSize: 17,
+    lineHeight: 19,
+  },
+  tabCreateButton: {
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 32,
+    justifyContent: "center",
+    width: 34,
+  },
+  tabCreateGlyph: {
+    fontFamily: fonts.mono,
+    fontSize: 14,
     fontWeight: "800",
   },
   modalRoot: {
@@ -1148,6 +1487,19 @@ const styles = StyleSheet.create({
     gap: 12,
     maxHeight: "92%",
     padding: 16,
+  },
+  settingsModalRootRegular: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  settingsSheetRegular: {
+    borderRadius: 20,
+    borderWidth: 1,
+    maxHeight: "88%",
+    maxWidth: 640,
+    padding: 20,
+    width: "100%",
   },
   settingsScrollContent: {
     gap: 12,
