@@ -23,6 +23,10 @@ export interface WmuxKeyInputFocusEvent {
   focused: boolean;
 }
 
+export interface WmuxKeyInputHardwareKeyboardEvent {
+  connected: boolean;
+}
+
 export interface WmuxKeyInputModifierEvent {
   ctrl: "off" | "armed" | "locked";
   alt: "off" | "armed" | "locked";
@@ -40,7 +44,9 @@ export interface WmuxKeyInputRef {
 export interface WmuxKeyInputViewProps {
   altSendsMeta?: boolean;
   autoFocus?: boolean;
+  onCopy?: (event: NativeSyntheticEvent<Record<string, never>>) => void;
   onFocusChange?: (event: NativeSyntheticEvent<WmuxKeyInputFocusEvent>) => void;
+  onHardwareKeyboardChange?: (event: NativeSyntheticEvent<WmuxKeyInputHardwareKeyboardEvent>) => void;
   onKey?: (event: NativeSyntheticEvent<WmuxKeyInputKeyEvent>) => void;
   onModifierState?: (event: NativeSyntheticEvent<WmuxKeyInputModifierEvent>) => void;
   onPaste?: (event: NativeSyntheticEvent<WmuxKeyInputPasteEvent>) => void;

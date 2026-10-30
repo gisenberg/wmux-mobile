@@ -1,6 +1,6 @@
 # wmux-mobile Implementation Plan
 
-A native iOS and Android client for [wmux](../wmux), phone first.
+A native iOS and Android client for [wmux](../wmux), phone first with tablet support.
 
 This document is the implementation brief for a capable agent.
 It states the architecture, the contracts, the milestones, and the acceptance criteria.
@@ -28,8 +28,9 @@ The goal is a native app that is materially better than the mobile web app on ex
   The server owns canonical workspace state and one live session client per pane.
   The mobile app is an attachable view, exactly like the browser.
 - Reimplementing VT emulation.
-- Tablet-optimized or desktop-class multi-pane layouts in v1.
-  Phone is the target; tablets should be usable but are not tuned.
+- Desktop-class multi-pane layouts in v1.
+  Phone is the primary target.
+  Tablets get a persistent workspace sidebar, a header tab strip, and hardware-keyboard shortcuts, but split panes still collapse to the active pane.
 - Screen streaming (MediaMTX and the Moonlight gateway).
   Explicitly deferred past v1.
 - Embedding Tailscale.
@@ -376,7 +377,7 @@ Deferred:
 - Machine and dynamic-registry editing.
 - Retro boot artwork and the WebGL empty-workspace shader.
   Ship a simple, well-made native empty state instead.
-- Tablet-tuned multi-pane layouts.
+- Side-by-side split pane rendering on tablets.
 
 ## 15. Milestones
 

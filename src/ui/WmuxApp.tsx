@@ -31,12 +31,33 @@ import {
   readNativeClipboardText,
   writeNativeClipboardText,
 } from "@/clipboard/native-clipboard";
+import {
+  compileHardwareShortcuts,
+  matchHardwareShortcut,
+  numberedShortcutPosition,
+  terminalShortcutInput,
+  type HardwareShortcutAction,
+} from "@/input/hardware-shortcuts";
 import { TerminalInput, type TerminalInputHandle } from "@/input/TerminalInput";
 import { chromeTheme, normalizeTerminalColorScheme, type ChromeTheme } from "@/navigation/chrome-theme";
 import { navigationFixture } from "@/navigation/fixture";
 import { sameNavigationSelection } from "@/navigation/last-active";
-import { cycleTab, resolveNavigation, type NavigationSelection, type ResolvedNavigation } from "@/navigation/model";
-import { WorkspaceChrome, type WorkspaceAction, type WorkspaceSurface } from "@/navigation/WorkspaceChrome";
+import {
+  cyclePane,
+  cycleTab,
+  latestUnreadNavigation,
+  resolveNavigation,
+  selectTabAt,
+  type NavigationSelection,
+  type ResolvedNavigation,
+} from "@/navigation/model";
+import { cycleWorkspace, selectWorkspaceAt } from "@/navigation/sidebar-model";
+import {
+  WorkspaceChrome,
+  type WorkspaceAction,
+  type WorkspaceChromeHandle,
+  type WorkspaceSurface,
+} from "@/navigation/WorkspaceChrome";
 import { type ConnectionPhase, useWmuxConnection } from "@/state/use-wmux-connection";
 import {
   TerminalSurface,
@@ -55,6 +76,7 @@ import {
 } from "@/terminal/interactions";
 import { normalizeTerminalLink } from "@/terminal/links";
 import { colors, fonts } from "@/ui/theme";
+import { useFormFactor } from "@/ui/use-form-factor";
 
 const defaultEndpoint = process.env.EXPO_PUBLIC_WMUX_URL ?? "";
 
@@ -67,11 +89,13 @@ export function WmuxApp() {
   const inputRef = useRef<TerminalInputHandle>(null);
   const inputTargetRef = useRef<"diagnostic" | "terminal" | null>(null);
   const terminalRef = useRef<TerminalSurfaceHandle>(null);
+  const chromeRef = useRef<WorkspaceChromeHandle>(null);
   const [accessToken, setAccessToken] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "token">("login");
   const [endpointDraft, setEndpointDraft] = useState<string | null>(null);
   const [inputDiagnosticEvents, setInputDiagnosticEvents] = useState<string[]>([]);
   const [inputFocused, setInputFocused] = useState(false);
+  const [hardwareKeyboardConnected, setHardwareKeyboardConnected] = useState(false);
   const [mutationBusy, setMutationBusy] = useState(false);
   const [navigationPreference, setNavigationPreference] = useState<NavigationSelection | null>(null);
   const [password, setPassword] = useState("");
@@ -98,6 +122,8 @@ export function WmuxApp() {
       (notification) => notification.workspaceId === activeWorkspaceId && !notification.read,
     ) ?? false;
   const activeChromeTheme = chromeTheme(connection.bootstrap?.settings.colorScheme ?? "wmux");
+  const keybindings = connection.bootstrap?.keybindings;
+  const hardwareShortcuts = useMemo(() => compileHardwareShortcuts(keybindings, Platform.OS === "ios"), [keybindings]);
 
   const showClipboardNotice = useCallback((message: string): void => {
     if (clipboardNoticeTimerRef.current) clearTimeout(clipboardNoticeTimerRef.current);
@@ -145,6 +171,13 @@ export function WmuxApp() {
     [activePaneId],
   );
 
+  const focusTerminalInput = useCallback((): void => focusInput("terminal"), [focusInput]);
+
+  const blurTerminalInput = useCallback((): void => {
+    inputTargetRef.current = null;
+    void inputRef.current?.blur();
+  }, []);
+
   const handleInputFocusChange = useCallback(
     (focused: boolean): void => {
       setInputFocused(focused);
@@ -153,37 +186,6 @@ export function WmuxApp() {
       }
     },
     [pushInputDiagnosticEvent],
-  );
-
-  const handleInputKey = useCallback(
-    (event: WmuxKeyInputKeyEvent): void => {
-      if (inputTargetRef.current === "diagnostic") {
-        const modifiers = [
-          event.ctrl ? "ctrl" : "",
-          event.alt ? "alt" : "",
-          event.shift ? "shift" : "",
-          event.meta ? "meta" : "",
-        ]
-          .filter(Boolean)
-          .join("+");
-        pushInputDiagnosticEvent(
-          `key: ${modifiers ? `${modifiers}+` : ""}${event.key} · ${event.source}${event.repeat ? " · repeat" : ""}`,
-        );
-        return;
-      }
-      if (!activePaneId) return;
-      terminalRef.current?.send({
-        t: "key",
-        paneId: activePaneId,
-        key: event.key,
-        code: event.code,
-        ctrl: event.ctrl,
-        alt: event.alt,
-        shift: event.shift,
-        meta: event.meta,
-      });
-    },
-    [activePaneId, pushInputDiagnosticEvent],
   );
 
   const handleInputText = useCallback(
@@ -230,18 +232,47 @@ export function WmuxApp() {
   const performWorkspaceAction = useCallback(
     async (action: WorkspaceAction): Promise<void> => {
       if (!navigation) return;
+      const { pane, selection, tab, workspace } = navigation;
       setMutationBusy(true);
       try {
         if (action.type === "create-workspace") {
-          const result = await connection.mutate((client) =>
-            client.createWorkspace(action.machineId, navigation.pane.id),
-          );
+          const result = await connection.mutate((client) => client.createWorkspace(action.machineId, pane.id));
           const next = result ? resolveNavigation(result.state, { workspaceId: result.workspace.id }) : null;
           if (next) navigateTo(next);
           return;
         }
-        const result = await connection.mutate((client) => client.closeWorkspace(navigation.workspace.id));
-        const next = result ? resolveNavigation(result.state, navigation.selection) : null;
+        if (action.type === "create-tab") {
+          const result = await connection.mutate((client) => client.createTab(workspace.id, pane.machineId, pane.id));
+          const next = result
+            ? resolveNavigation(result.state, { workspaceId: workspace.id, tabId: result.tab.id })
+            : null;
+          if (next) navigateTo(next);
+          return;
+        }
+        if (action.type === "split-pane") {
+          const result = await connection.mutate((client) =>
+            client.splitPane(tab.id, pane.id, action.direction, pane.machineId),
+          );
+          const next = result
+            ? resolveNavigation(result.state, {
+                workspaceId: workspace.id,
+                tabId: result.tab.id,
+                paneId: result.tab.activePaneId,
+              })
+            : null;
+          if (next) navigateTo(next);
+          return;
+        }
+        if (action.type === "close-tab") {
+          const result = await connection.mutate((client) => client.closeTab(workspace.id, action.tabId));
+          const next = result
+            ? resolveNavigation(result.state, action.tabId === tab.id ? { workspaceId: workspace.id } : selection)
+            : null;
+          if (next) navigateTo(next);
+          return;
+        }
+        const result = await connection.mutate((client) => client.closeWorkspace(workspace.id));
+        const next = result ? resolveNavigation(result.state, selection) : null;
         if (next) {
           navigateTo(next);
         } else {
@@ -255,22 +286,167 @@ export function WmuxApp() {
     [connection, navigateTo, navigation, rememberNavigation],
   );
 
+  const confirmDestructive = useCallback(
+    (title: string, message: string, confirmLabel: string, onConfirm: () => void): void => {
+      Alert.alert(title, message, [
+        { style: "cancel", text: "Cancel" },
+        { onPress: onConfirm, style: "destructive", text: confirmLabel },
+      ]);
+    },
+    [],
+  );
+
   const handleWorkspaceAction = useCallback(
-    (action: WorkspaceAction): void => {
-      if (action.type === "create-workspace") {
+    (requested: WorkspaceAction): void => {
+      const action: WorkspaceAction =
+        requested.type === "close-tab" && navigation && navigation.workspace.tabs.length < 2
+          ? { type: "close-workspace" }
+          : requested;
+      if (action.type === "close-tab") {
+        const closingTab = navigation?.workspace.tabs.find((candidate) => candidate.id === action.tabId);
+        const sessions = closingTab?.panes.length ?? 1;
+        confirmDestructive(
+          "Close tab?",
+          `This tab and its ${sessions === 1 ? "running session" : `${sessions} running sessions`} will be closed.`,
+          "Close tab",
+          () => void performWorkspaceAction(action),
+        );
+        return;
+      }
+      if (action.type !== "close-workspace") {
         void performWorkspaceAction(action);
         return;
       }
-      Alert.alert("Close workspace?", "The current workspace and its running sessions will be closed.", [
-        { style: "cancel", text: "Cancel" },
-        {
-          onPress: () => void performWorkspaceAction(action),
-          style: "destructive",
-          text: "Close workspace",
-        },
-      ]);
+      confirmDestructive(
+        "Close workspace?",
+        "The current workspace and its running sessions will be closed.",
+        "Close workspace",
+        () => void performWorkspaceAction(action),
+      );
     },
-    [performWorkspaceAction],
+    [confirmDestructive, navigation, performWorkspaceAction],
+  );
+
+  const runHardwareShortcut = useCallback(
+    (action: HardwareShortcutAction): void => {
+      const terminalInput = terminalShortcutInput[action];
+      if (terminalInput !== undefined) {
+        if (activePaneId) terminalRef.current?.send({ t: "text", paneId: activePaneId, data: terminalInput });
+        return;
+      }
+      if (action === "sidebar.toggle") {
+        chromeRef.current?.toggleSidebar();
+        return;
+      }
+      if (action === "settings.open") {
+        chromeRef.current?.openSettings();
+        return;
+      }
+      const bootstrap = connection.bootstrap;
+      if (!bootstrap || !navigation) return;
+      const { selection } = navigation;
+      const position = numberedShortcutPosition(action);
+      let next: ResolvedNavigation | null = null;
+      if (position !== undefined) {
+        next = action.startsWith("workspace.")
+          ? selectWorkspaceAt(bootstrap, selection, position)
+          : selectTabAt(bootstrap, selection, position);
+      } else if (action === "workspace.previous" || action === "workspace.next") {
+        next = cycleWorkspace(bootstrap, selection, action === "workspace.next" ? 1 : -1);
+      } else if (action === "tab.previous" || action === "tab.next") {
+        next = cycleTab(bootstrap, selection, action === "tab.next" ? 1 : -1);
+      } else if (action === "pane.focusPrevious" || action === "pane.focusNext") {
+        next = cyclePane(bootstrap, selection, action === "pane.focusNext" ? 1 : -1);
+      } else if (action === "notification.latestUnread") {
+        next = latestUnreadNavigation(bootstrap);
+      } else if (!mutationBusy) {
+        if (action === "workspace.new") {
+          handleWorkspaceAction({ type: "create-workspace", machineId: navigation.pane.machineId });
+        } else if (action === "workspace.close") {
+          handleWorkspaceAction({ type: "close-workspace" });
+        } else if (action === "tab.new") {
+          handleWorkspaceAction({ type: "create-tab" });
+        } else if (action === "tab.close" && navigation.workspace.tabs.length > 1) {
+          // Like the desktop web client, the keyboard shortcut closes a tab without a confirmation round trip.
+          void performWorkspaceAction({ type: "close-tab", tabId: navigation.tab.id });
+        } else if (action === "tab.close") {
+          handleWorkspaceAction({ type: "close-workspace" });
+        } else if (action === "pane.splitRight" || action === "pane.splitDown") {
+          handleWorkspaceAction({
+            type: "split-pane",
+            direction: action === "pane.splitDown" ? "horizontal" : "vertical",
+          });
+        }
+      }
+      if (next && !sameNavigationSelection(next.selection, selection)) navigateTo(next);
+    },
+    [
+      activePaneId,
+      connection.bootstrap,
+      handleWorkspaceAction,
+      mutationBusy,
+      navigateTo,
+      navigation,
+      performWorkspaceAction,
+    ],
+  );
+
+  const handleInputKey = useCallback(
+    (event: WmuxKeyInputKeyEvent): void => {
+      const shortcut = event.source === "hardware" ? matchHardwareShortcut(hardwareShortcuts, event) : undefined;
+      if (inputTargetRef.current === "diagnostic") {
+        const modifiers = [
+          event.ctrl ? "ctrl" : "",
+          event.alt ? "alt" : "",
+          event.shift ? "shift" : "",
+          event.meta ? "meta" : "",
+        ]
+          .filter(Boolean)
+          .join("+");
+        pushInputDiagnosticEvent(
+          `key: ${modifiers ? `${modifiers}+` : ""}${event.key} · ${event.source}${event.repeat ? " · repeat" : ""}${
+            shortcut ? ` → ${shortcut}` : ""
+          }`,
+        );
+        return;
+      }
+      if (shortcut) {
+        if (!event.repeat || terminalShortcutInput[shortcut] !== undefined) runHardwareShortcut(shortcut);
+        return;
+      }
+      // Command chords belong to the app, matching macOS terminals; they never reach the PTY.
+      if (event.source === "hardware" && event.meta) return;
+      if (!activePaneId) return;
+      terminalRef.current?.send({
+        t: "key",
+        paneId: activePaneId,
+        key: event.key,
+        code: event.code,
+        ctrl: event.ctrl,
+        alt: event.alt,
+        shift: event.shift,
+        meta: event.meta,
+      });
+    },
+    [activePaneId, hardwareShortcuts, pushInputDiagnosticEvent, runHardwareShortcut],
+  );
+
+  const handleInputCopy = useCallback((): void => {
+    if (inputTargetRef.current === "diagnostic") {
+      pushInputDiagnosticEvent("copy: command");
+      return;
+    }
+    if (activePaneId) terminalRef.current?.send({ t: "copySelection", paneId: activePaneId });
+  }, [activePaneId, pushInputDiagnosticEvent]);
+
+  const handleHardwareKeyboardChange = useCallback(
+    (connected: boolean): void => {
+      setHardwareKeyboardConnected(connected);
+      if (inputTargetRef.current === "diagnostic") {
+        pushInputDiagnosticEvent(`hardware keyboard: ${connected ? "connected" : "disconnected"}`);
+      }
+    },
+    [pushInputDiagnosticEvent],
   );
 
   const updateSettings = useCallback(
@@ -295,6 +471,10 @@ export function WmuxApp() {
 
   const pasteIntoTerminal = useCallback(
     async (providedText?: string): Promise<void> => {
+      if (inputTargetRef.current === "diagnostic") {
+        pushInputDiagnosticEvent(`paste: ${providedText?.length ?? 0} characters`);
+        return;
+      }
       if (!activePaneId) return;
       try {
         const text = providedText ?? (await readNativeClipboardText());
@@ -309,7 +489,7 @@ export function WmuxApp() {
         showClipboardNotice("Could not read the system clipboard");
       }
     },
-    [activePaneId, showClipboardNotice],
+    [activePaneId, pushInputDiagnosticEvent, showClipboardNotice],
   );
 
   const showDashboard =
@@ -330,6 +510,8 @@ export function WmuxApp() {
       >
         {showDashboard ? (
           <Dashboard
+            chromeRef={chromeRef}
+            hardwareKeyboardConnected={hardwareKeyboardConnected}
             inputFocused={inputFocused}
             accessToken={connection.terminalAccessToken}
             bootstrap={showDashboard.bootstrap}
@@ -338,12 +520,9 @@ export function WmuxApp() {
             mutationBusy={mutationBusy}
             navigation={showDashboard.navigation}
             onAction={handleWorkspaceAction}
-            onBlurInput={() => {
-              inputTargetRef.current = null;
-              void inputRef.current?.blur();
-            }}
+            onBlurInput={blurTerminalInput}
             onClipboardNotice={showClipboardNotice}
-            onFocusInput={() => focusInput("terminal")}
+            onFocusInput={focusTerminalInput}
             onForget={() => {
               setEndpointDraft(null);
               setNavigationPreference(null);
@@ -444,7 +623,9 @@ export function WmuxApp() {
         )}
       </KeyboardAvoidingView>
       <TerminalInput
+        onCopy={handleInputCopy}
         onFocusChange={handleInputFocusChange}
+        onHardwareKeyboardChange={handleHardwareKeyboardChange}
         onKey={handleInputKey}
         onModifierState={handleModifierState}
         onPaste={(text) => void pasteIntoTerminal(text)}
@@ -975,6 +1156,8 @@ function AuthenticationCard(props: AuthenticationCardProps) {
 }
 
 interface DashboardProps {
+  chromeRef: RefObject<WorkspaceChromeHandle | null>;
+  hardwareKeyboardConnected: boolean;
   inputFocused: boolean;
   accessToken: string | undefined;
   bootstrap: BootstrapPayload;
@@ -996,6 +1179,8 @@ interface DashboardProps {
 }
 
 function Dashboard({
+  chromeRef,
+  hardwareKeyboardConnected,
   inputFocused,
   accessToken,
   bootstrap,
@@ -1016,6 +1201,17 @@ function Dashboard({
   terminalRef,
 }: DashboardProps) {
   const [surface, setSurface] = useState<WorkspaceSurface>("terminal");
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const autoFocusTerminal = hardwareKeyboardConnected && surface === "terminal" && !overlayOpen;
+
+  // With a hardware keyboard the terminal input costs no screen space, so typing works without a tap first.
+  useEffect(() => {
+    if (autoFocusTerminal) onFocusInput();
+  }, [autoFocusTerminal, onFocusInput]);
+
+  useEffect(() => {
+    if (overlayOpen) onBlurInput();
+  }, [onBlurInput, overlayOpen]);
 
   const changeSurface = useCallback(
     (next: WorkspaceSurface): void => {
@@ -1054,7 +1250,9 @@ function Dashboard({
       onForget={onForget}
       onNavigate={onNavigate}
       onOpenDiagnostics={onOpenDiagnostics}
+      onOverlayChange={setOverlayOpen}
       onRefresh={onRetry}
+      ref={chromeRef}
       onSurfaceChange={changeSurface}
       onUpdateSettings={onUpdateSettings}
       surface={surface}
@@ -1143,6 +1341,7 @@ function LiveTerminalCard({
   terminalRef: RefObject<TerminalSurfaceHandle | null>;
 }) {
   const paneId = navigation.pane.id;
+  const regularLayout = useFormFactor() === "regular";
   const [altScreen, setAltScreen] = usePaneValue(paneId, false);
   const [mouseTracking, setMouseTracking] = usePaneValue(paneId, false);
   const [clipboardBusy, setClipboardBusy] = useState(false);
@@ -1306,7 +1505,7 @@ function LiveTerminalCard({
   );
 
   return (
-    <View style={styles.terminalCard}>
+    <View style={[styles.terminalCard, regularLayout && styles.terminalCardRegular]}>
       <View style={styles.terminalGestureSurface}>
         <View style={styles.terminalOverlay}>
           {paneConnection === "live" ? null : (
@@ -2121,6 +2320,10 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     overflow: "hidden",
+  },
+  terminalCardRegular: {
+    paddingLeft: 10,
+    paddingTop: 6,
   },
   terminalGestureSurface: {
     flex: 1,

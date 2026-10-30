@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import GameController
 import UIKit
 
 private enum ModifierState: String {
@@ -12,10 +13,32 @@ private struct KeyDescriptor {
   let code: String
 }
 
+private struct HardwareKeyPress {
+  let key: String
+  let code: String
+  let ctrl: Bool
+  let alt: Bool
+  let shift: Bool
+  let meta: Bool
+}
+
+private let hardwareRepeatDelay: TimeInterval = 0.4
+private let hardwareRepeatInterval: TimeInterval = 0.033
+
 private final class TerminalTextView: UITextView {
   var terminalAccessoryView: UIView?
   var onHardwareKey: ((UIKey) -> Bool)?
+  var onHardwareKeyReleased: ((UIKey) -> Void)?
   var onEmptyDeleteBackward: (() -> Void)?
+  var onPasteCommand: (() -> Void)?
+  var onCopyCommand: (() -> Void)?
+
+  // The text view only stages IME input; an undo stack would replay text the terminal already received.
+  private let disabledUndoManager: UndoManager = {
+    let manager = UndoManager()
+    manager.disableUndoRegistration()
+    return manager
+  }()
 
   override var inputAccessoryView: UIView? {
     get {
@@ -26,17 +49,68 @@ private final class TerminalTextView: UITextView {
     }
   }
 
+  override var undoManager: UndoManager? {
+    disabledUndoManager
+  }
+
+  override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+    if action == #selector(paste(_:)) {
+      return UIPasteboard.general.hasStrings
+    }
+    if action == #selector(copy(_:)) {
+      return true
+    }
+    return false
+  }
+
+  override func paste(_ sender: Any?) {
+    onPasteCommand?()
+  }
+
+  override func copy(_ sender: Any?) {
+    onCopyCommand?()
+  }
+
+  private var handledPresses = Set<UIPress>()
+
   override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
     var unhandled = presses
     for keyPress in presses {
       guard let key = keyPress.key, onHardwareKey?(key) == true else {
         continue
       }
+      handledPresses.insert(keyPress)
       unhandled.remove(keyPress)
     }
     if !unhandled.isEmpty {
       super.pressesBegan(unhandled, with: event)
     }
+  }
+
+  override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+    let unhandled = releasePresses(presses)
+    if !unhandled.isEmpty {
+      super.pressesEnded(unhandled, with: event)
+    }
+  }
+
+  override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+    let unhandled = releasePresses(presses)
+    if !unhandled.isEmpty {
+      super.pressesCancelled(unhandled, with: event)
+    }
+  }
+
+  private func releasePresses(_ presses: Set<UIPress>) -> Set<UIPress> {
+    var unhandled = presses
+    for keyPress in presses where handledPresses.contains(keyPress) {
+      handledPresses.remove(keyPress)
+      unhandled.remove(keyPress)
+      if let key = keyPress.key {
+        onHardwareKeyReleased?(key)
+      }
+    }
+    return unhandled
   }
 
   override func deleteBackward() {
@@ -123,6 +197,8 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
   let onPaste = EventDispatcher()
   let onFocusChange = EventDispatcher()
   let onModifierState = EventDispatcher()
+  let onCopy = EventDispatcher()
+  let onHardwareKeyboardChange = EventDispatcher()
 
   var altSendsMeta = false
 
@@ -135,6 +211,10 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
   private var altButton: UIButton?
   private var shouldAutoFocus = false
   private var isResettingText = false
+  private var hardwareKeyboardConnected = false
+  private var hardwareRepeatKeyCode: UIKeyboardHIDUsage?
+  private var hardwareRepeatStart: DispatchWorkItem?
+  private var hardwareRepeatTimer: Timer?
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -161,10 +241,37 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
     textView.onHardwareKey = { [weak self] key in
       self?.handleHardwareKey(key) ?? false
     }
+    textView.onHardwareKeyReleased = { [weak self] key in
+      self?.stopHardwareRepeat(keyCode: key.keyCode)
+    }
     textView.onEmptyDeleteBackward = { [weak self] in
       self?.sendInputBackspace()
     }
+    textView.onPasteCommand = { [weak self] in
+      self?.onPaste(["text": UIPasteboard.general.string ?? ""])
+    }
+    textView.onCopyCommand = { [weak self] in
+      self?.onCopy([:])
+    }
     addSubview(textView)
+
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(hardwareKeyboardAvailabilityChanged),
+      name: .GCKeyboardDidConnect,
+      object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(hardwareKeyboardAvailabilityChanged),
+      name: .GCKeyboardDidDisconnect,
+      object: nil
+    )
+  }
+
+  deinit {
+    NotificationCenter.default.removeObserver(self)
+    stopHardwareRepeat()
   }
 
   override func layoutSubviews() {
@@ -181,9 +288,28 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
-    if window != nil, shouldAutoFocus {
+    guard window != nil else {
+      stopHardwareRepeat()
+      return
+    }
+    publishHardwareKeyboard(GCKeyboard.coalesced != nil, force: true)
+    if shouldAutoFocus {
       focus()
     }
+  }
+
+  @objc private func hardwareKeyboardAvailabilityChanged() {
+    DispatchQueue.main.async { [weak self] in
+      self?.publishHardwareKeyboard(GCKeyboard.coalesced != nil)
+    }
+  }
+
+  private func publishHardwareKeyboard(_ connected: Bool, force: Bool = false) {
+    guard force || connected != hardwareKeyboardConnected else {
+      return
+    }
+    hardwareKeyboardConnected = connected
+    onHardwareKeyboardChange(["connected": connected])
   }
 
   func focus() {
@@ -193,6 +319,7 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
   }
 
   func blur() {
+    stopHardwareRepeat()
     textView.resignFirstResponder()
   }
 
@@ -248,6 +375,7 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
   }
 
   func textViewDidEndEditing(_ textView: UITextView) {
+    stopHardwareRepeat()
     commitUnmarkedText()
     onFocusChange(["focused": false])
   }
@@ -307,30 +435,91 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
   }
 
   private func handleHardwareKey(_ hardwareKey: UIKey) -> Bool {
+    let hid = Int(hardwareKey.keyCode.rawValue)
+    if isModifierHid(hid) {
+      return false
+    }
+    // A physical key proves a hardware keyboard even where GameController reports none, such as the Simulator.
+    publishHardwareKeyboard(true)
+
     let flags = hardwareKey.modifierFlags
     let ctrl = flags.contains(.control)
     let alt = flags.contains(.alternate)
-    let shift = flags.contains(.shift) || flags.contains(.alphaShift)
+    let shift = flags.contains(.shift)
     let meta = flags.contains(.command)
-    let descriptor = descriptorForHid(Int(hardwareKey.keyCode.rawValue), fallback: hardwareKey.charactersIgnoringModifiers)
+
+    // Command-C and Command-V travel through UIKit's edit actions so a keyboard paste is a user-initiated paste.
+    if meta, !ctrl, !alt, hid == 0x06 || hid == 0x19 {
+      return false
+    }
+
+    let descriptor = descriptorForHid(hid, fallback: hardwareKey.charactersIgnoringModifiers)
     let isModified = ctrl || alt || meta
     let isSpecial = descriptor.key.count > 1
 
     guard isModified || isSpecial else {
+      stopHardwareRepeat()
       return false
     }
 
-    sendKey(
+    let press = HardwareKeyPress(
       key: descriptor.key,
       code: descriptor.code,
       ctrl: ctrl,
       alt: alt,
       shift: shift,
-      meta: meta,
-      repeatKey: false,
+      meta: meta
+    )
+    sendHardwareKey(press, repeatKey: false)
+    if meta {
+      stopHardwareRepeat()
+    } else {
+      startHardwareRepeat(press, keyCode: hardwareKey.keyCode)
+    }
+    return true
+  }
+
+  private func sendHardwareKey(_ press: HardwareKeyPress, repeatKey: Bool) {
+    sendKey(
+      key: press.key,
+      code: press.code,
+      ctrl: press.ctrl,
+      alt: press.alt,
+      shift: press.shift,
+      meta: press.meta,
+      repeatKey: repeatKey,
       source: "hardware"
     )
-    return true
+  }
+
+  // UIKit does not repeat presses that bypass text input, so held terminal keys repeat here.
+  private func startHardwareRepeat(_ press: HardwareKeyPress, keyCode: UIKeyboardHIDUsage) {
+    stopHardwareRepeat()
+    hardwareRepeatKeyCode = keyCode
+    let start = DispatchWorkItem { [weak self] in
+      guard let self, self.hardwareRepeatKeyCode == keyCode else {
+        return
+      }
+      self.sendHardwareKey(press, repeatKey: true)
+      let timer = Timer(timeInterval: hardwareRepeatInterval, repeats: true) { [weak self] _ in
+        self?.sendHardwareKey(press, repeatKey: true)
+      }
+      self.hardwareRepeatTimer = timer
+      RunLoop.main.add(timer, forMode: .common)
+    }
+    hardwareRepeatStart = start
+    DispatchQueue.main.asyncAfter(deadline: .now() + hardwareRepeatDelay, execute: start)
+  }
+
+  private func stopHardwareRepeat(keyCode: UIKeyboardHIDUsage? = nil) {
+    if let keyCode, keyCode != hardwareRepeatKeyCode {
+      return
+    }
+    hardwareRepeatKeyCode = nil
+    hardwareRepeatStart?.cancel()
+    hardwareRepeatStart = nil
+    hardwareRepeatTimer?.invalidate()
+    hardwareRepeatTimer = nil
   }
 
   private func buildAccessoryView() -> UIView {
@@ -509,6 +698,10 @@ final class WmuxKeyInputView: ExpoView, UITextViewDelegate {
       for: .normal
     )
   }
+}
+
+private func isModifierHid(_ hid: Int) -> Bool {
+  hid == 0x39 || (0xE0...0xE7).contains(hid)
 }
 
 private func descriptorForHid(_ hid: Int, fallback: String) -> KeyDescriptor {
