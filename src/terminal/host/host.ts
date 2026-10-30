@@ -55,6 +55,10 @@ const dispatch = (input: unknown): void => {
     emit({ t: "log", level: "warn", message: `Ignored native bridge message: ${decoded.issue}` });
     return;
   }
+  if (decoded.value.t === "ping") {
+    emit({ t: "pong", nonce: decoded.value.nonce });
+    return;
+  }
   if (!pool) {
     emit({ t: "log", level: "error", message: "Terminal host is not ready" });
     return;

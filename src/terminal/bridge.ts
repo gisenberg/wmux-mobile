@@ -49,10 +49,12 @@ export type ToHost =
       yPx?: number;
     }
   | { t: "copySelection"; paneId: string }
-  | { t: "settings"; settings: HostSettings };
+  | { t: "settings"; settings: HostSettings }
+  | { t: "ping"; nonce: string };
 
 export type ToNative =
   | { t: "ready" }
+  | { t: "pong"; nonce: string }
   | { t: "pane"; paneId: string; state: "connecting" | "live" | "lost" | "exited"; issue?: string }
   | { t: "metrics"; paneId: string; cols: number; rows: number; cellW: number; cellH: number }
   | { t: "title"; paneId: string; title: string }
@@ -86,6 +88,7 @@ const toHostTypes = new Set([
   "selection",
   "copySelection",
   "settings",
+  "ping",
 ]);
 const selectionActions = new Set(["start", "move", "end", "clear", "word", "line", "all"]);
 
@@ -109,6 +112,12 @@ export const decodeToHost = (input: unknown): BridgeDecodeResult<ToHost> => {
   if (message.t === "settings") {
     const settings = decodeHostSettings(message.settings);
     return settings.ok ? valid({ t: "settings", settings: settings.value }) : settings;
+  }
+
+  if (message.t === "ping") {
+    return typeof message.nonce === "string" && message.nonce
+      ? valid({ t: "ping", nonce: message.nonce })
+      : invalid("ping requires a nonce");
   }
 
   if (typeof message.paneId !== "string" || !message.paneId) {
@@ -219,6 +228,11 @@ export const decodeToNative = (input: unknown): BridgeDecodeResult<ToNative> => 
   if (!isRecord(message) || typeof message.t !== "string") return invalid("native message must have a type");
 
   if (message.t === "ready") return valid({ t: "ready" });
+  if (message.t === "pong") {
+    return typeof message.nonce === "string" && message.nonce
+      ? valid({ t: "pong", nonce: message.nonce })
+      : invalid("pong requires a nonce");
+  }
   if (message.t === "log") {
     if (
       (message.level !== "debug" && message.level !== "warn" && message.level !== "error") ||

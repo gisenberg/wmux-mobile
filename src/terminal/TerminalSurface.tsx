@@ -3,6 +3,7 @@ import { File } from "expo-file-system";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   PixelRatio,
   StyleSheet,
   Text,
@@ -16,6 +17,7 @@ import { runOnJS } from "react-native-reanimated";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { decodeToNative, encodeBridgeMessage, type HostSettings, type ToHost, type ToNative } from "@/terminal/bridge";
+import { RENDERER_PROBE_TIMEOUT_MS, RendererRestartBudget } from "@/terminal/renderer-recovery";
 import { TerminalViewportCoordinator, type TerminalViewport } from "@/terminal/viewport-coordinator";
 import { colors, fonts } from "@/ui/theme";
 
@@ -62,6 +64,12 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
   const [issue, setIssue] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [hostGeneration, setHostGeneration] = useState(0);
+  const [rendererKey, setRendererKey] = useState(0);
+  const [restarting, setRestarting] = useState(false);
+  const readyRef = useRef(false);
+  const rendererFailedRef = useRef(false);
+  const restartBudgetRef = useRef(new RendererRestartBudget());
+  const probeRef = useRef<{ nonce: string; timeout: ReturnType<typeof setTimeout> } | undefined>(undefined);
   const [viewport, setViewport] = useState<TerminalViewport>({ width: 0, height: 0 });
   const viewportCoordinator = useMemo(() => new TerminalViewportCoordinator(setViewport), []);
   const status: TerminalSurfaceStatus = issue ? "error" : !html ? "loading-asset" : ready ? "ready" : "loading-host";
@@ -126,18 +134,85 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
 
   useImperativeHandle(forwardedRef, () => ({ activateLink, send: post }), [activateLink, post]);
 
+  const settlePendingLinkRequests = useCallback((): void => {
+    for (const request of pendingLinkRequestsRef.current.values()) {
+      clearTimeout(request.timeout);
+      request.resolve(undefined);
+    }
+    pendingLinkRequestsRef.current.clear();
+  }, []);
+
+  const cancelProbe = useCallback((): void => {
+    if (probeRef.current) clearTimeout(probeRef.current.timeout);
+    probeRef.current = undefined;
+  }, []);
+
+  // iOS reclaims the WebContent process of backgrounded apps. Remounting the WebView restarts the host, and the
+  // ready handshake re-initializes and reattaches the pane, whose server replay restores the screen.
+  const restartRenderer = useCallback(
+    (reason: string): void => {
+      cancelProbe();
+      settlePendingLinkRequests();
+      readyRef.current = false;
+      setReady(false);
+      if (!restartBudgetRef.current.tryRestart(Date.now())) {
+        rendererFailedRef.current = true;
+        setRestarting(false);
+        setIssue(reason);
+        return;
+      }
+      setIssue(null);
+      setRestarting(true);
+      setRendererKey((key) => key + 1);
+    },
+    [cancelProbe, settlePendingLinkRequests],
+  );
+
+  // A suspended WebContent process can also come back unresponsive without a termination callback.
+  const probeRenderer = useCallback((): void => {
+    if (!readyRef.current || probeRef.current) return;
+    const nonce = `probe-${Date.now()}`;
+    probeRef.current = {
+      nonce,
+      timeout: setTimeout(() => {
+        probeRef.current = undefined;
+        restartRenderer("The terminal renderer stopped responding");
+      }, RENDERER_PROBE_TIMEOUT_MS),
+    };
+    post({ t: "ping", nonce });
+  }, [post, restartRenderer]);
+
+  useEffect(() => {
+    let previousState = AppState.currentState;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const resumed = previousState === "background" && nextState === "active";
+      previousState = nextState;
+      if (nextState !== "active") {
+        cancelProbe();
+        return;
+      }
+      if (!resumed) return;
+      if (rendererFailedRef.current) {
+        rendererFailedRef.current = false;
+        restartBudgetRef.current.reset();
+        restartRenderer("The terminal renderer stopped unexpectedly");
+        return;
+      }
+      probeRenderer();
+    });
+    return () => {
+      subscription.remove();
+      cancelProbe();
+    };
+  }, [cancelProbe, probeRenderer, restartRenderer]);
+
   useEffect(() => {
     viewportCoordinator.activate();
-    const pendingLinkRequests = pendingLinkRequestsRef.current;
     return () => {
       viewportCoordinator.dispose();
-      for (const request of pendingLinkRequests.values()) {
-        clearTimeout(request.timeout);
-        request.resolve(undefined);
-      }
-      pendingLinkRequests.clear();
+      settlePendingLinkRequests();
     };
-  }, [viewportCoordinator]);
+  }, [settlePendingLinkRequests, viewportCoordinator]);
 
   const beginViewportTransition = useCallback((): void => {
     viewportCoordinator.beginTransition();
@@ -211,9 +286,16 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
         return;
       }
       if (decoded.value.t === "ready") {
+        readyRef.current = true;
+        rendererFailedRef.current = false;
         setReady(true);
+        setRestarting(false);
         setHostGeneration((generation) => generation + 1);
         setIssue(null);
+      }
+      if (decoded.value.t === "pong") {
+        if (probeRef.current?.nonce === decoded.value.nonce) cancelProbe();
+        return;
       }
       if (decoded.value.t === "link") {
         const request = pendingLinkRequestsRef.current.get(decoded.value.requestId);
@@ -226,7 +308,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       if (decoded.value.t === "log" && decoded.value.level === "error") setIssue(decoded.value.message);
       onMessage?.(decoded.value);
     },
-    [onMessage],
+    [cancelProbe, onMessage],
   );
 
   return (
@@ -240,6 +322,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           }
         >
           <WebView
+            key={rendererKey}
             ref={webViewRef}
             allowFileAccess={false}
             allowFileAccessFromFileURLs={false}
@@ -257,9 +340,9 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
             keyboardDisplayRequiresUserAction
             mediaPlaybackRequiresUserAction
             mixedContentMode="never"
-            onContentProcessDidTerminate={() => setIssue("The terminal renderer stopped unexpectedly")}
+            onContentProcessDidTerminate={() => restartRenderer("The terminal renderer stopped unexpectedly")}
             onMessage={handleMessage}
-            onRenderProcessGone={() => setIssue("The terminal renderer process stopped unexpectedly")}
+            onRenderProcessGone={() => restartRenderer("The terminal renderer process stopped unexpectedly")}
             onShouldStartLoadWithRequest={(request) => allowedNavigation(request.url, baseUrl)}
             originWhitelist={["https://*", "http://*", "about:blank", "data:*"]}
             overScrollMode="never"
@@ -277,7 +360,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           />
         </View>
       ) : null}
-      {status !== "ready" ? <TerminalSurfaceOverlay issue={issue} status={status} /> : null}
+      {status !== "ready" ? <TerminalSurfaceOverlay issue={issue} restarting={restarting} status={status} /> : null}
     </View>
   );
 });
@@ -296,9 +379,11 @@ async function readTerminalHostAsset(uri: string): Promise<string> {
 
 function TerminalSurfaceOverlay({
   issue,
+  restarting,
   status,
 }: {
   issue: string | null;
+  restarting: boolean;
   status: Exclude<TerminalSurfaceStatus, "ready">;
 }) {
   return (
@@ -308,7 +393,9 @@ function TerminalSurfaceOverlay({
         {status === "loading-asset"
           ? "Loading offline terminal bundle"
           : status === "loading-host"
-            ? "Starting Ghostty renderer"
+            ? restarting
+              ? "Restarting terminal renderer"
+              : "Starting Ghostty renderer"
             : (issue ?? "Terminal renderer unavailable")}
       </Text>
     </View>
