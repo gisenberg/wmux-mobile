@@ -24,6 +24,7 @@ const settings: HostSettings = {
 
 test("terminal bridge decodes every native-to-host command family", () => {
   const messages: ToHost[] = [
+    { t: "ping", nonce: "probe-1" },
     { t: "init", serverUrl: "https://wmux.example.test", token: "secret", settings },
     { t: "attach", paneId: "pane-1" },
     { t: "show", paneId: "pane-1" },
@@ -65,6 +66,7 @@ test("terminal bridge rejects malformed and non-finite native input", () => {
     { t: "scroll", paneId: "pane-1", deltaLines: 1, xPx: -1, yPx: 20 },
     { t: "activateLink", paneId: "pane-1", requestId: "", xPx: -1, yPx: 20 },
     { t: "selection", paneId: "pane-1", action: "diagonal" },
+    { t: "ping", nonce: "" },
     { t: "settings", settings: { ...settings, terminalFontFamily: "" } },
     { t: "settings", settings: { ...settings, colorScheme: "unknown" } },
   ];
@@ -75,6 +77,7 @@ test("terminal bridge rejects malformed and non-finite native input", () => {
 test("terminal bridge validates host-to-native messages before React Native consumes them", () => {
   const messages: ToNative[] = [
     { t: "ready" },
+    { t: "pong", nonce: "probe-1" },
     { t: "pane", paneId: "pane-1", state: "live" },
     { t: "metrics", paneId: "pane-1", cols: 80, rows: 24, cellW: 8.5, cellH: 17 },
     { t: "title", paneId: "pane-1", title: "shell" },

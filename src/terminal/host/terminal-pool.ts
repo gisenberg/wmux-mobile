@@ -32,7 +32,7 @@ export class TerminalPool {
     this.emit = options.emit;
   }
 
-  receive(message: ToHost): void {
+  receive(message: Exclude<ToHost, { t: "ping" }>): void {
     if (message.t === "init") {
       this.initialize(message.serverUrl, message.token, message.settings);
       return;
