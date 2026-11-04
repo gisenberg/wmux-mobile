@@ -296,8 +296,12 @@ test("coalesces animated viewport changes before resizing the PTY", async ({ pag
     },
   );
 
-  await page.waitForTimeout(150);
-  expect(socket.received.filter((message) => message.type === "activate" || message.type === "resize")).toHaveLength(1);
+  const sizeMessages = () =>
+    socket.received.filter((message) => message.type === "activate" || message.type === "resize");
+  await expect.poll(() => sizeMessages().length).toBe(1);
+  // Wait past another settle window so a second, uncoalesced resize would be caught.
+  await page.waitForTimeout(300);
+  expect(sizeMessages()).toHaveLength(1);
   const snapshot = (await harness.snapshot()).sessions.find((session) => session.paneId === paneId);
   expect(socket.received.find((message) => message.type === "activate" || message.type === "resize")).toMatchObject({
     type: "activate",
