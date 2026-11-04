@@ -11,7 +11,7 @@
       "config": {
         "usesNonExemptEncryption": false
       },
-      "supportsTablet": false
+      "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {

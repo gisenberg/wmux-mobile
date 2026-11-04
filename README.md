@@ -1,9 +1,9 @@
 # wmux mobile
 
-A phone-first native iOS and Android client for [wmux](../wmux).
+A native iOS and Android client for [wmux](../wmux) on phones and tablets.
 
 The project implements the foundation through the M6 native selection and clipboard work described in [PLAN.md](PLAN.md).
-It provides an Expo SDK 57 development-build foundation, strict TypeScript, reproducible protocol and terminal dependency vendoring, secure connection storage, authenticated bootstrap loading, a reconnecting event stream, a single-WebView Ghostty terminal pool, platform-native terminal key input, phone-first workspace navigation, touch selection, and native clipboard handoff.
+It provides an Expo SDK 57 development-build foundation, strict TypeScript, reproducible protocol and terminal dependency vendoring, secure connection storage, authenticated bootstrap loading, a reconnecting event stream, a single-WebView Ghostty terminal pool, platform-native terminal key input, phone and tablet workspace navigation, touch selection, and native clipboard handoff.
 
 ## Requirements
 
@@ -95,6 +95,33 @@ Settings cover all seven vendored terminal color schemes, font size, TUI frame r
 The selected terminal theme colors the workspace chrome and app header.
 An offline navigation diagnostic exercises the same drawer, tabs, pane bar, host picker, actions, settings, themes, and gestures without contacting a server.
 The modals support portrait and both landscape orientations and account for platform safe areas.
+
+## Tablets and hardware keyboards
+
+The iOS build supports iPad, including every orientation, Split View, Slide Over, and Stage Manager windows.
+Windows at least 900 points wide keep the workspace sidebar beside the terminal and show the active workspace's tabs in the header.
+That covers every iPad in landscape and a 13-inch iPad in portrait.
+Narrower windows use the phone drawer, and the header menu button or the sidebar shortcut hides and restores the sidebar.
+The settings sheet becomes a centered panel and the chat thread keeps a readable width on wide screens.
+
+A hardware keyboard is detected on connection or on its first key press.
+While one is attached, the terminal input focuses itself whenever the terminal is visible and no sheet or drawer is open, so typing works without a tap.
+Held hardware keys repeat natively, including arrows, Backspace, and Control chords.
+Command-C copies the active terminal selection and Command-V pastes through the system edit action, so a keyboard paste does not raise the iOS paste confirmation.
+The accessory row stays available for Escape, which the iPad Magic Keyboard lacks.
+
+App shortcuts come from the server's resolved wmux keybindings, so overrides configured for the web client apply here too.
+On mobile, a global shortcut is honored only when its chord includes Command, or Meta on Android.
+Control and Option chords such as Ctrl+W, Ctrl+D, or a tmux Ctrl+B prefix therefore always reach the terminal.
+With the default bindings, Command-T opens a tab, Command-W closes it, Command-Shift-[ and Command-Shift-] cycle tabs, Command-1 through Command-9 select workspaces, Command-Control-[ and Command-Control-] cycle workspaces, Command-N creates a workspace, Command-Shift-W closes it, Command-D and Command-Shift-D split the active pane, Command-Option-arrows move between panes, Command-Shift-U opens the newest unread alert, and Command-B toggles the sidebar.
+The terminal actions keep their web defaults: Shift-Return inserts a newline, and Option-Left and Option-Right move by word.
+Other Command chords are reserved for the app and are never sent to the PTY.
+Command-W closes a tab immediately, like the desktop web client.
+Closing a workspace, or a workspace's last tab, still asks for confirmation, and Escape cancels it.
+On Android, Ctrl+Shift+C and Ctrl+Shift+V, or Meta+C and Meta+V, copy and paste.
+
+Split panes still collapse to the active pane on tablets.
+Every pane remains reachable from the sidebar and the pane focus shortcuts.
 
 ## Native touch and clipboard
 

@@ -1,6 +1,8 @@
 package expo.modules.wmuxkeyinput
 
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -23,6 +25,8 @@ class WmuxKeyInputView(context: Context, appContext: AppContext) : ExpoView(cont
   private val onKey by EventDispatcher<Map<String, Any>>()
   private val onText by EventDispatcher<Map<String, String>>()
   private val onPaste by EventDispatcher<Map<String, String>>()
+  private val onCopy by EventDispatcher<Map<String, String>>()
+  private val onHardwareKeyboardChange by EventDispatcher<Map<String, Boolean>>()
   private val onFocusChange by EventDispatcher<Map<String, Boolean>>()
   private val onModifierState by EventDispatcher<Map<String, String>>()
 
@@ -30,6 +34,7 @@ class WmuxKeyInputView(context: Context, appContext: AppContext) : ExpoView(cont
   private var shouldAutoFocus = false
   private val keyRepeatHandler = Handler(Looper.getMainLooper())
   private var keyRepeatAction: Runnable? = null
+  private var hardwareKeyboardConnected: Boolean? = null
 
   init {
     isFocusable = true
@@ -47,9 +52,26 @@ class WmuxKeyInputView(context: Context, appContext: AppContext) : ExpoView(cont
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
+    publishHardwareKeyboard(resources.configuration)
     if (shouldAutoFocus) {
       focusInput()
     }
+  }
+
+  override fun onConfigurationChanged(newConfig: Configuration) {
+    super.onConfigurationChanged(newConfig)
+    publishHardwareKeyboard(newConfig)
+  }
+
+  private fun publishHardwareKeyboard(configuration: Configuration) {
+    val connected =
+      configuration.keyboard != Configuration.KEYBOARD_NOKEYS &&
+        configuration.hardKeyboardHidden != Configuration.HARDKEYBOARDHIDDEN_YES
+    if (connected == hardwareKeyboardConnected) {
+      return
+    }
+    hardwareKeyboardConnected = connected
+    onHardwareKeyboardChange(mapOf("connected" to connected))
   }
 
   override fun onDetachedFromWindow() {
@@ -110,11 +132,34 @@ class WmuxKeyInputView(context: Context, appContext: AppContext) : ExpoView(cont
     val descriptor = descriptorForKeyCode(event.keyCode)
     val ctrl = event.isCtrlPressed
     val alt = event.isAltPressed
-    val shift = event.isShiftPressed || event.isCapsLockOn
+    val shift = event.isShiftPressed
     val meta = event.isMetaPressed
+    val repeatKey = event.repeatCount > 0
 
     if (descriptor != null) {
-      emitKey(descriptor.first, descriptor.second, ctrl, alt, shift, meta, event.repeatCount > 0, "hardware")
+      emitKey(descriptor.first, descriptor.second, ctrl, alt, shift, meta, repeatKey, "hardware")
+      return true
+    }
+
+    // Linux terminal clipboard chords: Ctrl+Shift+C/V, plus Meta+C/V for keyboards with a command key.
+    val clipboardChord = (ctrl && shift && !alt && !meta) || (meta && !ctrl && !alt && !shift)
+    if (clipboardChord && !repeatKey && event.keyCode == KeyEvent.KEYCODE_C) {
+      onCopy(mapOf())
+      return true
+    }
+    if (clipboardChord && !repeatKey && event.keyCode == KeyEvent.KEYCODE_V) {
+      onPaste(mapOf("text" to clipboardText()))
+      return true
+    }
+
+    if (ctrl || alt || meta) {
+      val code = codeForKeyCode(event.keyCode)
+      val baseCharacter = event.getUnicodeChar(event.metaState and (KeyEvent.META_SHIFT_MASK or KeyEvent.META_CAPS_LOCK_ON))
+      val key = if (baseCharacter != 0) String(Character.toChars(baseCharacter)) else ""
+      if (code.isEmpty() && key.isEmpty()) {
+        return false
+      }
+      emitKey(key, code.ifEmpty { codeForCharacter(key) }, ctrl, alt, shift, meta, repeatKey, "hardware")
       return true
     }
 
@@ -122,13 +167,17 @@ class WmuxKeyInputView(context: Context, appContext: AppContext) : ExpoView(cont
     if (unicode == 0) {
       return false
     }
-    val text = String(Character.toChars(unicode))
-    if (ctrl || alt || meta) {
-      emitKey(text, codeForCharacter(text), ctrl, alt, shift, meta, event.repeatCount > 0, "hardware")
-    } else {
-      emitText(text)
-    }
+    emitText(String(Character.toChars(unicode)))
     return true
+  }
+
+  private fun clipboardText(): String {
+    val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val clip = manager.primaryClip ?: return ""
+    if (clip.itemCount == 0) {
+      return ""
+    }
+    return clip.getItemAt(0).coerceToText(context)?.toString().orEmpty()
   }
 
   fun emitText(data: String) {
@@ -319,6 +368,25 @@ private fun isModifierOnly(keyCode: Int): Boolean =
     keyCode == KeyEvent.KEYCODE_SHIFT_RIGHT ||
     keyCode == KeyEvent.KEYCODE_META_LEFT ||
     keyCode == KeyEvent.KEYCODE_META_RIGHT
+
+private fun codeForKeyCode(keyCode: Int): String =
+  when (keyCode) {
+    in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> "Key${'A' + (keyCode - KeyEvent.KEYCODE_A)}"
+    in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> "Digit${keyCode - KeyEvent.KEYCODE_0}"
+    KeyEvent.KEYCODE_SPACE -> "Space"
+    KeyEvent.KEYCODE_MINUS -> "Minus"
+    KeyEvent.KEYCODE_EQUALS -> "Equal"
+    KeyEvent.KEYCODE_LEFT_BRACKET -> "BracketLeft"
+    KeyEvent.KEYCODE_RIGHT_BRACKET -> "BracketRight"
+    KeyEvent.KEYCODE_BACKSLASH -> "Backslash"
+    KeyEvent.KEYCODE_SEMICOLON -> "Semicolon"
+    KeyEvent.KEYCODE_APOSTROPHE -> "Quote"
+    KeyEvent.KEYCODE_GRAVE -> "Backquote"
+    KeyEvent.KEYCODE_COMMA -> "Comma"
+    KeyEvent.KEYCODE_PERIOD -> "Period"
+    KeyEvent.KEYCODE_SLASH -> "Slash"
+    else -> ""
+  }
 
 private fun codeForCharacter(value: String): String {
   val character = value.firstOrNull() ?: return ""

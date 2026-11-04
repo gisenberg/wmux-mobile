@@ -26,7 +26,7 @@ Read `PLAN.md` and `../wmux/AGENTS.md` before changing architecture or wire cont
 ## Generated Sources
 
 `../wmux/src/shared/protocol.ts` and its shared type-only imports are the only sources of truth for the server protocol.
-Never hand-edit `protocol/wmux.ts`, `protocol/keybindings.d.ts`, or `protocol/SOURCE`.
+Never hand-edit `protocol/wmux.ts`, `protocol/keybindings.ts`, or `protocol/SOURCE`.
 Run `npm run sync:protocol` and commit all generated protocol files together.
 
 Never hand-edit files under `src/terminal/host/vendor`.

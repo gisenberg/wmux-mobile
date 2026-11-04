@@ -55,6 +55,19 @@ export const paneDrawerLabel = (tab: SurfaceTab, pane: PaneState, paneIndex: num
   return cwd || `Pane ${paneIndex + 1}`;
 };
 
+export const tabUnreadCount = (notifications: TerminalNotification[], tabId: string): number =>
+  notifications.filter((notification) => !notification.read && notification.tabId === tabId).length;
+
+export const tabStripLabel = (tab: SurfaceTab, tabIndex: number): string => {
+  const tabTitle = tab.title.trim();
+  if (!isGenericTerminalTitle(tabTitle)) return tabTitle;
+  const pane = tab.panes.find((candidate) => candidate.id === tab.activePaneId) ?? tab.panes[0];
+  const paneTitle = pane?.title.trim() ?? "";
+  if (!isGenericTerminalTitle(paneTitle)) return paneTitle;
+  const cwd = normalizeDrawerPath(pane?.cwd);
+  return cwd.split("/").filter(Boolean).at(-1) ?? `Tab ${tabIndex + 1}`;
+};
+
 export const normalizeDrawerPath = (cwd: string | undefined): string => {
   let pathValue = cwd?.trim() ?? "";
   if (!pathValue) return "";

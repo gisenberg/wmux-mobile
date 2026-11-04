@@ -119,52 +119,54 @@ export function ChatSurface({ bootstrap, navigation, onOpenTerminal, onSend }: C
         showsVerticalScrollIndicator={false}
       />
       <View style={[styles.composer, { backgroundColor: theme.panel, borderColor: theme.line }]}>
-        {!agentName ? (
-          <Text style={[styles.composerHint, { color: theme.muted }]}>
-            Start an agent in Terminal before sending chat messages.
-          </Text>
-        ) : null}
-        {sendIssue ? <Text style={styles.sendIssue}>{sendIssue}</Text> : null}
-        <View style={styles.composerRow}>
-          <TextInput
-            accessibilityLabel="Agent message"
-            autoCapitalize="sentences"
-            autoCorrect
-            blurOnSubmit={false}
-            editable={Boolean(agentName) && !sending}
-            multiline
-            onChangeText={setDraft}
-            placeholder={agentName ? `Message ${agentName}` : "No agent detected"}
-            placeholderTextColor={theme.muted}
-            selectionColor={theme.accent}
-            style={[
-              styles.input,
-              {
-                backgroundColor: theme.canvas,
-                borderColor: theme.line,
-                color: theme.text,
-              },
-            ]}
-            value={draft}
-          />
-          <Pressable
-            accessibilityLabel="Send agent message"
-            accessibilityRole="button"
-            disabled={!agentName || !draft.trim() || sending}
-            onPress={() => void submit()}
-            style={({ pressed }) => [
-              styles.sendButton,
-              { backgroundColor: theme.accent },
-              (!agentName || !draft.trim() || sending) && styles.disabled,
-              pressed && styles.pressed,
-            ]}
-          >
-            {sending ? (
-              <ActivityIndicator color={theme.canvas} size="small" />
-            ) : (
-              <Text style={[styles.sendButtonText, { color: theme.canvas }]}>↑</Text>
-            )}
-          </Pressable>
+        <View style={styles.composerContent}>
+          {!agentName ? (
+            <Text style={[styles.composerHint, { color: theme.muted }]}>
+              Start an agent in Terminal before sending chat messages.
+            </Text>
+          ) : null}
+          {sendIssue ? <Text style={styles.sendIssue}>{sendIssue}</Text> : null}
+          <View style={styles.composerRow}>
+            <TextInput
+              accessibilityLabel="Agent message"
+              autoCapitalize="sentences"
+              autoCorrect
+              blurOnSubmit={false}
+              editable={Boolean(agentName) && !sending}
+              multiline
+              onChangeText={setDraft}
+              placeholder={agentName ? `Message ${agentName}` : "No agent detected"}
+              placeholderTextColor={theme.muted}
+              selectionColor={theme.accent}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: theme.canvas,
+                  borderColor: theme.line,
+                  color: theme.text,
+                },
+              ]}
+              value={draft}
+            />
+            <Pressable
+              accessibilityLabel="Send agent message"
+              accessibilityRole="button"
+              disabled={!agentName || !draft.trim() || sending}
+              onPress={() => void submit()}
+              style={({ pressed }) => [
+                styles.sendButton,
+                { backgroundColor: theme.accent },
+                (!agentName || !draft.trim() || sending) && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              {sending ? (
+                <ActivityIndicator color={theme.canvas} size="small" />
+              ) : (
+                <Text style={[styles.sendButtonText, { color: theme.canvas }]}>↑</Text>
+              )}
+            </Pressable>
+          </View>
         </View>
       </View>
     </View>
@@ -240,15 +242,20 @@ const relativeTime = (value: string): string => {
   return `${Math.floor(hours / 24)}D`;
 };
 
+const readableWidth = 860;
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
     minHeight: 0,
   },
   thread: {
+    alignSelf: "center",
     gap: 10,
+    maxWidth: readableWidth,
     padding: 12,
     paddingBottom: 18,
+    width: "100%",
   },
   emptyThread: {
     flexGrow: 1,
@@ -355,8 +362,13 @@ const styles = StyleSheet.create({
   },
   composer: {
     borderTopWidth: 1,
-    gap: 7,
     padding: 8,
+  },
+  composerContent: {
+    alignSelf: "center",
+    gap: 7,
+    maxWidth: readableWidth - 16,
+    width: "100%",
   },
   composerHint: {
     fontFamily: fonts.mono,

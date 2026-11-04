@@ -8,7 +8,7 @@ class WmuxKeyInputModule : Module() {
     Name("WmuxKeyInput")
 
     View(WmuxKeyInputView::class) {
-      Events("onKey", "onText", "onPaste", "onFocusChange", "onModifierState")
+      Events("onKey", "onText", "onPaste", "onCopy", "onFocusChange", "onModifierState", "onHardwareKeyboardChange")
 
       Prop("altSendsMeta") { view: WmuxKeyInputView, value: Boolean ->
         view.altSendsMeta = value

@@ -1,5 +1,7 @@
 import type { AgentActivity, BootstrapPayload, PaneState, SurfaceTab, Workspace } from "../../protocol/wmux";
 
+import { numberedItem, type NavigationSelection, type ResolvedNavigation } from "@/navigation/model";
+
 export interface DrawerWorkspaceRow {
   depth: number;
   favorite: boolean;
@@ -57,6 +59,39 @@ export const drawerWorkspaceGroups = (
     rows: sortFavoriteWorkspaceRows(grouped.get(machineId) ?? []),
   }));
 };
+
+export const drawerRowNavigation = ({ pane, tab, workspace }: DrawerWorkspaceRow): ResolvedNavigation => ({
+  pane,
+  selection: { paneId: pane.id, tabId: tab.id, workspaceId: workspace.id },
+  tab,
+  workspace,
+});
+
+export const drawerNavigationTargets = (bootstrap: BootstrapPayload, activeWorkspaceId: string): ResolvedNavigation[] =>
+  drawerWorkspaceGroups(bootstrap, activeWorkspaceId).flatMap((group) => group.rows.map(drawerRowNavigation));
+
+export const cycleWorkspace = (
+  bootstrap: BootstrapPayload,
+  current: NavigationSelection,
+  direction: -1 | 1,
+): ResolvedNavigation | null => {
+  const targets = drawerNavigationTargets(bootstrap, current.workspaceId);
+  if (!targets.length) return null;
+  const currentIndex = targets.findIndex((target) => target.workspace.id === current.workspaceId);
+  const nextIndex =
+    currentIndex === -1
+      ? direction > 0
+        ? 0
+        : targets.length - 1
+      : (currentIndex + direction + targets.length) % targets.length;
+  return targets[nextIndex] ?? null;
+};
+
+export const selectWorkspaceAt = (
+  bootstrap: BootstrapPayload,
+  current: NavigationSelection,
+  position: number,
+): ResolvedNavigation | null => numberedItem(drawerNavigationTargets(bootstrap, current.workspaceId), position) ?? null;
 
 const visibleWorkspaceRows = (
   bootstrap: BootstrapPayload,
